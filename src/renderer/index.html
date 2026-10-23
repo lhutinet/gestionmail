@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
+    <title>GestionMail</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand"><span>G</span> GestionMail</div>
+        <button id="new-message" class="compose" type="button" disabled>＋ Nouveau message</button>
+        <div class="accounts-title first-title">COMPTES</div>
+        <div id="account-list" class="account-list"></div>
+        <button id="add-account" class="add-account" type="button">＋ Ajouter un compte</button>
+        <div class="accounts-title">FAVORIS</div>
+        <nav id="favorite-list" aria-label="Dossiers favoris"><div class="sidebar-empty">Aucun favori</div></nav>
+        <div class="accounts-title">DOSSIERS DU COMPTE</div>
+        <nav id="folder-list" class="folder-tree" aria-label="Dossiers">
+          <button class="nav-item active" type="button" disabled>Boîte de réception</button>
+        </nav>
+        <div class="accounts-title">DOSSIERS LOCAUX</div>
+        <nav id="local-folder-list" aria-label="Dossiers locaux"><div class="sidebar-empty">Aucun dossier local</div></nav>
+        <button id="add-local-folder" class="add-account" type="button">＋ Nouveau dossier local</button>
+      </aside>
+
+      <main class="content">
+        <header class="toolbar">
+          <div>
+            <h1>Boîte de réception</h1>
+            <p id="status-line">Aucun compte configuré</p>
+          </div>
+          <div class="toolbar-actions">
+            <label class="auto-sync">Auto
+              <select id="auto-sync">
+                <option value="0">désactivée</option>
+                <option value="1">1 min</option>
+                <option value="5">5 min</option>
+                <option value="15">15 min</option>
+                <option value="30">30 min</option>
+              </select>
+            </label>
+            <button id="sync-button" class="secondary" type="button" disabled>↻ Actualiser</button>
+            <label class="search"><span>⌕</span><input id="message-search" type="search" placeholder="Rechercher dans les messages" disabled></label>
+          </div>
+        </header>
+        <section id="welcome" class="empty-state">
+          <div class="mail-illustration">✉</div>
+          <h2>Bienvenue dans GestionMail</h2>
+          <p>Ajoutez votre premier compte pour recevoir, lire et conserver vos e-mails sur cet ordinateur.</p>
+          <button id="empty-add-account" class="primary" type="button">Ajouter mon compte</button>
+        </section>
+        <section id="mail-view" class="mail-view" hidden>
+          <div id="message-list" class="message-list"></div>
+          <article id="message-content" class="message-content">
+            <div class="message-placeholder">Sélectionnez un message pour le lire.</div>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="account-dialog">
+      <form id="account-form" method="dialog">
+        <div class="dialog-heading">
+          <div><h2 id="account-dialog-title">Ajouter un compte</h2><p>Renseignez les paramètres fournis par votre messagerie.</p></div>
+          <button id="close-dialog" class="icon-button" type="button" aria-label="Fermer">×</button>
+        </div>
+        <div class="form-grid">
+          <input name="id" type="hidden">
+          <label>Nom affiché<input name="name" required autocomplete="name" placeholder="Marie Dupont"></label>
+          <label>Adresse e-mail<input name="email" type="email" required autocomplete="email" placeholder="marie@exemple.fr"></label>
+          <label>Type de réception<select name="protocol"><option value="imap">IMAP — synchronisation</option><option value="pop3">POP3 — téléchargement</option></select></label>
+          <label>Identifiant<input name="username" required autocomplete="username" placeholder="marie@exemple.fr"></label>
+          <fieldset>
+            <legend>Serveur entrant</legend>
+            <div class="server-row"><label>Adresse<input name="incomingHost" required placeholder="imap.exemple.fr"></label><label class="port">Port<input name="incomingPort" type="number" min="1" max="65535" value="993" required></label></div>
+            <label class="checkbox"><input name="incomingSecure" type="checkbox" checked> TLS direct — généralement 993 en IMAP ou 995 en POP3</label>
+          </fieldset>
+          <fieldset>
+            <legend>Serveur sortant SMTP</legend>
+            <div class="server-row"><label>Adresse<input name="outgoingHost" required placeholder="smtp.exemple.fr"></label><label class="port">Port<input name="outgoingPort" type="number" min="1" max="65535" value="465" required></label></div>
+            <label class="checkbox"><input name="outgoingSecure" type="checkbox" checked> TLS direct — port 465 ; décocher pour STARTTLS sur le port 587</label>
+          </fieldset>
+          <label class="full">Mot de passe<input name="password" type="password" required autocomplete="current-password"><small id="password-help">Il sera chiffré avec la protection de votre session Windows.</small></label>
+        </div>
+        <p id="form-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions split-actions"><button id="delete-account" class="danger" type="button" hidden>Supprimer ce compte</button><span></span><button id="cancel-dialog" type="button">Annuler</button><button id="save-account" class="primary" type="submit">Tester et enregistrer</button></div>
+      </form>
+    </dialog>
+    <dialog id="compose-dialog" class="compose-dialog">
+      <form id="compose-form" method="dialog">
+        <div class="dialog-heading">
+          <div><h2>Nouveau message</h2><p id="compose-from"></p></div>
+          <button id="close-compose" class="icon-button" type="button" aria-label="Fermer">×</button>
+        </div>
+        <div class="compose-fields">
+          <label>À<input name="to" type="text" required placeholder="destinataire@exemple.fr"></label>
+          <label>Copie<input name="cc" type="text" placeholder="copie@exemple.fr"></label>
+          <label>Objet<input name="subject" type="text"></label>
+          <label>Message<textarea name="body" rows="12" required></textarea></label>
+          <div class="compose-attachments">
+            <button id="choose-attachments" class="secondary" type="button">📎 Ajouter des fichiers</button>
+            <div id="selected-attachments" class="selected-attachments"></div>
+          </div>
+        </div>
+        <p id="compose-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions"><button id="cancel-compose" type="button">Annuler</button><button id="send-message" class="primary" type="submit">Envoyer</button></div>
+      </form>
+    </dialog>
+    <dialog id="copy-local-dialog" class="small-dialog">
+      <form id="copy-local-form" method="dialog">
+        <div class="dialog-heading">
+          <div><h2>Conserver en local</h2><p>Choisissez le dossier qui recevra une copie indépendante.</p></div>
+          <button id="close-copy-local" class="icon-button" type="button" aria-label="Fermer">×</button>
+        </div>
+        <label>Dossier local<select id="copy-local-target" required></select></label>
+        <p id="copy-local-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions"><button id="cancel-copy-local" type="button">Annuler</button><button class="primary" type="submit">Copier le message</button></div>
+      </form>
+    </dialog>
+    <script src="app.js"></script>
+  </body>
+</html>
+

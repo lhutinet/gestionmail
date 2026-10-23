@@ -1,0 +1,59 @@
+{
+  "name": "gestionmail",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Client de messagerie Windows local",
+  "author": "GestionMail",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "set ELECTRON_RUN_AS_NODE=&& electron .",
+    "check": "node --check src/main/main.js && node --check src/main/account-store.js && node --check src/main/preload.js && node --check src/renderer/app.js",
+    "smoke": "set ELECTRON_RUN_AS_NODE=&& electron . --smoke-test",
+    "dist:win": "electron-builder --win --x64"
+  },
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "imapflow": "^2.9.1",
+    "mailparser": "^3.12.4",
+    "nodemailer": "^10.2.1",
+    "sanitize-html": "^2.18.1"
+  },
+  "build": {
+    "appId": "fr.gestionmail.desktop",
+    "productName": "GestionMail",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "GestionMail"
+    },
+    "portable": {
+      "artifactName": "GestionMail-Portable-${version}.${ext}"
+    }
+  }
+}
