@@ -33,6 +33,11 @@ La version actuelle permet également :
 - d'organiser les dossiers IMAP sous forme d'arborescence repliable ;
 - d'épingler des dossiers serveur dans une zone Favoris propre à chaque compte ;
 - de créer des dossiers locaux et d'y copier indépendamment messages et pièces jointes.
+- d'afficher les dossiers locaux dans une bande verticale séparée, à gauche des dossiers serveur ;
+- de glisser-déposer un message directement sur un dossier local pour le conserver.
+- d'ouvrir les paramètres depuis la roue dentée en bas à gauche ;
+- de gérer l'ajout, la modification et la suppression des comptes dans Paramètres, avec un sélecteur compact dans la navigation ;
+- de choisir l'emplacement de la base locale sans supprimer automatiquement l'ancienne copie de sécurité.
 
 Certains fournisseurs, notamment Gmail et Microsoft, peuvent exiger OAuth2 ou un mot de passe d'application. OAuth2 n'est pas encore intégré.
 

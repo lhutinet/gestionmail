@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data: http: https:">
+    <title>Lecture du message</title>
+    <link rel="stylesheet" href="message-window.css">
+  </head>
+  <body>
+    <main id="standalone-message" class="standalone-message">
+      <div class="loading">Ouverture du message…</div>
+    </main>
+    <dialog id="group-dialog">
+      <form id="group-form" method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <h2>Créer un groupe</h2>
+            <p id="group-summary">Contacts sélectionnés</p>
+          </div>
+          <button id="close-group" class="icon-button" type="button" aria-label="Fermer">×</button>
+        </div>
+        <label>
+          Nom du groupe
+          <input id="group-name" maxlength="120" required placeholder="Famille, Association, Équipe…">
+        </label>
+        <p id="group-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="cancel-group" type="button">Annuler</button>
+          <button class="primary" type="submit">Créer le groupe</button>
+        </div>
+      </form>
+    </dialog>
+    <script src="message-window.js"></script>
+  </body>
+</html>

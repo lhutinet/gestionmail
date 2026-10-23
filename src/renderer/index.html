@@ -3,28 +3,40 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data: http: https:">
     <title>GestionMail</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
     <div class="app-shell">
+      <aside class="local-sidebar">
+        <div class="local-sidebar-heading">Stockage local</div>
+        <p class="local-sidebar-help">Glissez ici un e-mail ou un dossier complet. Double-cliquez sur un dossier local pour l’ouvrir dans Windows.</p>
+        <div id="folder-copy-progress" class="folder-copy-progress" role="status" aria-live="polite" hidden>
+          <div class="folder-copy-progress-heading"><span class="progress-spinner" aria-hidden="true"></span><strong id="folder-copy-progress-label">Copie en cours…</strong></div>
+          <progress id="folder-copy-progress-bar"></progress>
+          <span id="folder-copy-progress-detail">Préparation des dossiers</span>
+        </div>
+        <nav id="local-folder-list" aria-label="Dossiers locaux"><div class="sidebar-empty">Aucun dossier local</div></nav>
+        <button id="add-local-folder" class="add-account" type="button">＋ Nouveau dossier</button>
+        <button id="contacts-button" class="settings-button contacts-button" type="button">♙ Contacts</button>
+        <button id="settings-button" class="settings-button" type="button">⚙ Paramètres</button>
+      </aside>
+      <div class="column-resizer app-resizer" data-column-resize="local" role="separator" aria-label="Redimensionner les dossiers locaux" aria-orientation="vertical" tabindex="0" title="Glisser pour redimensionner — double-clic pour réinitialiser"></div>
       <aside class="sidebar">
         <div class="brand"><span>G</span> GestionMail</div>
+        <label class="account-switcher">Compte actif
+          <select id="account-selector"><option value="">Choisir un compte</option></select>
+        </label>
         <button id="new-message" class="compose" type="button" disabled>＋ Nouveau message</button>
-        <div class="accounts-title first-title">COMPTES</div>
-        <div id="account-list" class="account-list"></div>
-        <button id="add-account" class="add-account" type="button">＋ Ajouter un compte</button>
-        <div class="accounts-title">FAVORIS</div>
+        <div class="accounts-title first-title">FAVORIS</div>
         <nav id="favorite-list" aria-label="Dossiers favoris"><div class="sidebar-empty">Aucun favori</div></nav>
         <div class="accounts-title">DOSSIERS DU COMPTE</div>
         <nav id="folder-list" class="folder-tree" aria-label="Dossiers">
           <button class="nav-item active" type="button" disabled>Boîte de réception</button>
         </nav>
-        <div class="accounts-title">DOSSIERS LOCAUX</div>
-        <nav id="local-folder-list" aria-label="Dossiers locaux"><div class="sidebar-empty">Aucun dossier local</div></nav>
-        <button id="add-local-folder" class="add-account" type="button">＋ Nouveau dossier local</button>
       </aside>
+      <div class="column-resizer app-resizer" data-column-resize="accounts" role="separator" aria-label="Redimensionner les dossiers du compte" aria-orientation="vertical" tabindex="0" title="Glisser pour redimensionner — double-clic pour réinitialiser"></div>
 
       <main class="content">
         <header class="toolbar">
@@ -54,6 +66,7 @@
         </section>
         <section id="mail-view" class="mail-view" hidden>
           <div id="message-list" class="message-list"></div>
+          <div class="column-resizer mail-resizer" data-column-resize="messages" role="separator" aria-label="Redimensionner la liste des messages" aria-orientation="vertical" tabindex="0" title="Glisser pour redimensionner — double-clic pour réinitialiser"></div>
           <article id="message-content" class="message-content">
             <div class="message-placeholder">Sélectionnez un message pour le lire.</div>
           </article>
@@ -96,10 +109,68 @@
           <button id="close-compose" class="icon-button" type="button" aria-label="Fermer">×</button>
         </div>
         <div class="compose-fields">
-          <label>À<input name="to" type="text" required placeholder="destinataire@exemple.fr"></label>
-          <label>Copie<input name="cc" type="text" placeholder="copie@exemple.fr"></label>
+          <div class="recipient-field">
+            <label for="compose-to-editor">À</label>
+            <div class="recipient-control">
+              <div class="recipient-token-field" data-recipient-type="to">
+                <div id="compose-to-tokens" class="recipient-tokens"></div>
+                <input id="compose-to-editor" class="recipient-editor" type="text" list="contact-emails" placeholder="Saisir une adresse puis Entrée">
+                <input id="compose-to" name="to" type="hidden">
+              </div>
+              <button class="secondary choose-recipients" data-target="to" type="button">Contacts…</button>
+            </div>
+          </div>
+          <div class="recipient-field">
+            <label for="compose-cc-editor">Cc — copie</label>
+            <div class="recipient-control">
+              <div class="recipient-token-field" data-recipient-type="cc">
+                <div id="compose-cc-tokens" class="recipient-tokens"></div>
+                <input id="compose-cc-editor" class="recipient-editor" type="text" list="contact-emails" placeholder="Ajouter une copie">
+                <input id="compose-cc" name="cc" type="hidden">
+              </div>
+              <button class="secondary choose-recipients" data-target="cc" type="button">Contacts…</button>
+            </div>
+          </div>
           <label>Objet<input name="subject" type="text"></label>
-          <label>Message<textarea name="body" rows="12" required></textarea></label>
+          <div class="compose-body-field">
+            <label for="compose-body-editor">Message</label>
+            <div class="rich-editor">
+              <div id="compose-toolbar" class="compose-toolbar" role="toolbar" aria-label="Mise en forme du message">
+                <select id="compose-format" aria-label="Style du texte" title="Style du texte">
+                  <option value="p">Paragraphe</option>
+                  <option value="h1">Titre 1</option>
+                  <option value="h2">Titre 2</option>
+                  <option value="blockquote">Citation</option>
+                </select>
+                <button type="button" data-command="bold" title="Gras" aria-label="Gras"><strong>G</strong></button>
+                <button type="button" data-command="italic" title="Italique" aria-label="Italique"><em>I</em></button>
+                <button type="button" data-command="underline" title="Souligné" aria-label="Souligné"><u>S</u></button>
+                <button type="button" data-command="strikeThrough" title="Barré" aria-label="Barré"><s>abc</s></button>
+                <span class="toolbar-separator"></span>
+                <button type="button" data-command="insertUnorderedList" title="Liste à puces" aria-label="Liste à puces">• Liste</button>
+                <button type="button" data-command="insertOrderedList" title="Liste numérotée" aria-label="Liste numérotée">1. Liste</button>
+                <span class="toolbar-separator"></span>
+                <button type="button" data-command="justifyLeft" title="Aligner à gauche">Gauche</button>
+                <button type="button" data-command="justifyCenter" title="Centrer">Centre</button>
+                <button type="button" data-command="justifyRight" title="Aligner à droite">Droite</button>
+                <select id="compose-font-size" aria-label="Taille du texte" title="Taille du texte">
+                  <option value="3">Normal</option>
+                  <option value="2">Petit</option>
+                  <option value="4">Grand</option>
+                  <option value="5">Très grand</option>
+                </select>
+                <label class="compose-color" title="Couleur du texte"><span>Couleur</span><input id="compose-text-color" type="color" value="#263243" aria-label="Couleur du texte"></label>
+                <span class="toolbar-separator"></span>
+                <input id="compose-link-url" class="compose-link-url" type="url" placeholder="https://…" aria-label="Adresse du lien">
+                <button id="compose-add-link" type="button" title="Ajouter un lien">Lien</button>
+                <button type="button" data-command="unlink" title="Retirer le lien" aria-label="Retirer le lien">Lien ×</button>
+                <button type="button" data-command="removeFormat" title="Effacer la mise en forme" aria-label="Effacer la mise en forme">Effacer</button>
+              </div>
+              <div id="compose-body-editor" class="compose-body-editor" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Écrivez votre message…" spellcheck="true"></div>
+            </div>
+            <input id="compose-body" name="body" type="hidden">
+            <input id="compose-html-body" name="htmlBody" type="hidden">
+          </div>
           <div class="compose-attachments">
             <button id="choose-attachments" class="secondary" type="button">📎 Ajouter des fichiers</button>
             <div id="selected-attachments" class="selected-attachments"></div>
@@ -109,6 +180,7 @@
         <div class="dialog-actions"><button id="cancel-compose" type="button">Annuler</button><button id="send-message" class="primary" type="submit">Envoyer</button></div>
       </form>
     </dialog>
+    <datalist id="contact-emails"></datalist>
     <dialog id="copy-local-dialog" class="small-dialog">
       <form id="copy-local-form" method="dialog">
         <div class="dialog-heading">
@@ -118,6 +190,108 @@
         <label>Dossier local<select id="copy-local-target" required></select></label>
         <p id="copy-local-error" class="form-error" role="alert"></p>
         <div class="dialog-actions"><button id="cancel-copy-local" type="button">Annuler</button><button class="primary" type="submit">Copier le message</button></div>
+      </form>
+    </dialog>
+    <dialog id="local-folder-dialog" class="small-dialog">
+      <form id="local-folder-form" method="dialog">
+        <div class="dialog-heading">
+          <div><h2>Nouveau dossier local</h2><p>Les messages copiés dans ce dossier resteront disponibles hors connexion.</p></div>
+          <button id="close-local-folder" class="icon-button" type="button" aria-label="Fermer">×</button>
+        </div>
+        <label>Nom du dossier<input id="local-folder-name" name="name" maxlength="80" required placeholder="Archives personnelles"></label>
+        <p id="local-folder-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions"><button id="cancel-local-folder" type="button">Annuler</button><button class="primary" type="submit">Créer le dossier</button></div>
+      </form>
+    </dialog>
+    <dialog id="contacts-dialog" class="contacts-dialog">
+      <div class="contacts-panel">
+        <div class="dialog-heading">
+          <div><h2>Contacts</h2><p>Votre carnet d’adresses local.</p></div>
+          <button id="close-contacts" class="icon-button" type="button" aria-label="Fermer">×</button>
+        </div>
+        <div class="contacts-toolbar">
+          <input id="contact-search" type="search" placeholder="Rechercher un contact">
+          <button id="create-contact-group" class="secondary" type="button" disabled>Créer un groupe</button>
+          <button id="new-contact" class="secondary" type="button">＋ Nouveau</button>
+        </div>
+        <div class="contacts-layout">
+          <div class="contact-navigation">
+            <div class="contact-section-title">GROUPES</div>
+            <div id="contact-group-list" class="contact-group-list"><div class="contact-empty compact">Aucun groupe</div></div>
+            <div class="contact-section-title">CONTACTS</div>
+            <div id="contact-list" class="contact-list"></div>
+          </div>
+          <form id="contact-form">
+            <input name="id" type="hidden">
+            <label>Nom<input name="name" maxlength="120" required placeholder="Marie Dupont"></label>
+            <label>Adresse e-mail<input name="email" type="email" maxlength="254" required placeholder="marie@exemple.fr"></label>
+            <label>Téléphone<input name="phone" maxlength="80" placeholder="06 00 00 00 00"></label>
+            <label>Société<input name="company" maxlength="120" placeholder="Entreprise"></label>
+            <label>Notes<textarea name="notes" rows="5" maxlength="4000"></textarea></label>
+            <p id="contact-error" class="form-error" role="alert"></p>
+            <div class="contact-actions">
+              <button id="delete-contact" class="danger" type="button" hidden>Supprimer</button>
+              <span></span>
+              <button id="write-contact" class="secondary" type="button" disabled>Écrire</button>
+              <button class="primary" type="submit">Enregistrer</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </dialog>
+    <dialog id="recipient-picker-dialog" class="small-dialog recipient-picker-dialog">
+      <form id="recipient-picker-form" method="dialog">
+        <div class="dialog-heading">
+          <div><h2 id="recipient-picker-title">Choisir des contacts</h2><p>Sélectionnez un ou plusieurs contacts ou groupes.</p></div>
+          <button id="close-recipient-picker" class="icon-button" type="button" aria-label="Fermer">×</button>
+        </div>
+        <div id="recipient-picker-list" class="recipient-picker-list"></div>
+        <p id="recipient-picker-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions"><button id="cancel-recipient-picker" type="button">Annuler</button><button class="primary" type="submit">Ajouter la sélection</button></div>
+      </form>
+    </dialog>
+    <dialog id="contact-group-dialog" class="small-dialog">
+      <form id="contact-group-form" method="dialog">
+        <div class="dialog-heading">
+          <div><h2>Créer un groupe</h2><p id="contact-group-summary">Contacts sélectionnés</p></div>
+          <button id="close-contact-group" class="icon-button" type="button" aria-label="Fermer">×</button>
+        </div>
+        <label>Nom du groupe<input id="contact-group-name" name="name" maxlength="120" required placeholder="Famille, Association, Équipe…"></label>
+        <p id="contact-group-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions"><button id="cancel-contact-group" type="button">Annuler</button><button class="primary" type="submit">Créer le groupe</button></div>
+      </form>
+    </dialog>
+    <dialog id="settings-dialog" class="settings-dialog">
+      <form id="settings-form" method="dialog">
+        <div class="dialog-heading">
+          <div><h2>Paramètres</h2><p>Réglages généraux et stockage local de GestionMail.</p></div>
+          <button id="close-settings" class="icon-button" type="button" aria-label="Fermer">×</button>
+        </div>
+        <div class="settings-fields">
+          <fieldset>
+            <legend>Comptes de messagerie</legend>
+            <div id="account-list" class="account-list settings-account-list"></div>
+            <button id="add-account" class="secondary settings-add-account" type="button">＋ Ajouter un compte</button>
+          </fieldset>
+          <label>Actualisation automatique
+            <select name="autoSyncMinutes">
+              <option value="0">Désactivée</option><option value="1">Chaque minute</option>
+              <option value="5">Toutes les 5 minutes</option><option value="15">Toutes les 15 minutes</option>
+              <option value="30">Toutes les 30 minutes</option>
+            </select>
+          </label>
+          <label class="checkbox"><input name="notificationsEnabled" type="checkbox"> Afficher les notifications Windows</label>
+          <fieldset>
+            <legend>Emplacement des dossiers locaux</legend>
+            <div class="storage-row">
+              <input name="dataDirectory" type="text" readonly>
+              <button id="choose-data-directory" class="secondary" type="button">Parcourir…</button>
+            </div>
+            <small>La base d’index et le répertoire « Dossiers locaux » contenant les fichiers .eml sont conservés ici.</small>
+          </fieldset>
+        </div>
+        <p id="settings-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions"><button id="cancel-settings" type="button">Annuler</button><button id="save-settings" class="primary" type="submit">Enregistrer</button></div>
       </form>
     </dialog>
     <script src="app.js"></script>

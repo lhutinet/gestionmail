@@ -1,6 +1,7 @@
 const { ImapFlow } = require('imapflow');
 const nodemailer = require('nodemailer');
 const { simpleParser } = require('mailparser');
+const sanitizeHtml = require('sanitize-html');
 const { Pop3Client } = require('./pop3-client');
 const { storeMessage } = require('./message-store');
 
@@ -84,7 +85,7 @@ async function listFolders(account) {
   }
 }
 
-async function syncImap(account, folder) {
+async function syncImap(account, folder, fetchAll = false) {
   const client = new ImapFlow(imapOptions(account));
   await client.connect();
   let imported = 0;
@@ -93,7 +94,7 @@ async function syncImap(account, folder) {
     lock = await client.getMailboxLock(folder);
     const total = client.mailbox.exists;
     if (!total) return { imported: 0, total: 0 };
-    const start = Math.max(1, total - 49);
+    const start = fetchAll ? 1 : Math.max(1, total - 49);
     for await (const item of client.fetch(`${start}:*`, {
       uid: true,
       flags: true,
@@ -124,14 +125,14 @@ async function syncImap(account, folder) {
   }
 }
 
-async function syncPop3(account) {
+async function syncPop3(account, fetchAll = false) {
   return withPop3(account, async (client) => {
     const uidLines = await client.command('UIDL', true);
     const entries = uidLines.map((line) => {
       const [number, uid] = line.split(/\s+/, 2);
       return { number: Number(number), uid };
     }).filter((entry) => entry.number && entry.uid);
-    const selected = entries.slice(-50);
+    const selected = fetchAll ? entries : entries.slice(-50);
     for (const entry of selected) {
       const lines = await client.command(`RETR ${entry.number}`, true);
       const raw = Buffer.from(`${lines.join('\r\n')}\r\n`, 'latin1');
@@ -155,8 +156,8 @@ async function syncPop3(account) {
   });
 }
 
-async function syncAccount(account, folder = 'INBOX') {
-  return account.protocol === 'pop3' ? syncPop3(account) : syncImap(account, folder);
+async function syncAccount(account, folder = 'INBOX', fetchAll = false) {
+  return account.protocol === 'pop3' ? syncPop3(account, fetchAll) : syncImap(account, folder, fetchAll);
 }
 
 function imapUid(reference) {
@@ -214,6 +215,22 @@ async function sendMessage(account, message) {
     throw new Error('Le total des pièces jointes dépasse la limite de 25 Mo.');
   }
   const transport = smtpTransport(account);
+  const html = sanitizeHtml(String(message.htmlBody || ''), {
+    allowedTags: ['p', 'div', 'span', 'br', 'hr', 'b', 'strong', 'i', 'em', 'u', 's', 'blockquote', 'pre', 'code', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'a'],
+    allowedAttributes: { '*': ['style'], a: ['href', 'title'] },
+    allowedSchemes: ['http', 'https', 'mailto'],
+    allowedStyles: {
+      '*': {
+        color: [/^#[0-9a-f]{3,8}$/i, /^rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)$/i],
+        'font-size': [/^(?:xx-small|x-small|small|medium|large|x-large|xx-large|\d+(?:\.\d+)?(?:px|pt|em|rem|%))$/i],
+        'font-weight': [/^(?:normal|bold|[1-9]00)$/i],
+        'font-style': [/^(?:normal|italic|oblique)$/i],
+        'text-decoration': [/^(?:none|underline|line-through)(?:\s+solid)?$/i],
+        'text-align': [/^(?:left|center|right|justify)$/i]
+      }
+    },
+    disallowedTagsMode: 'discard'
+  });
   try {
     const result = await transport.sendMail({
       from: { name: account.name, address: account.email },
@@ -221,6 +238,7 @@ async function sendMessage(account, message) {
       cc: String(message.cc || '').trim() || undefined,
       subject: String(message.subject || '').trim() || '(Sans objet)',
       text: String(message.body || ''),
+      html: html || undefined,
       attachments
     });
     return { messageId: result.messageId };

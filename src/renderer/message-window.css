@@ -1,0 +1,50 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: #1b2430;
+  background: #fafbfc;
+}
+
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; }
+body { margin: 0; overflow: hidden; }
+button { font: inherit; cursor: pointer; }
+button:disabled { cursor: wait; opacity: .6; }
+.primary { border-color: #248d84 !important; color: white !important; background: #248d84 !important; }
+dialog { width: min(440px, calc(100vw - 32px)); padding: 0; border: 0; border-radius: 12px; box-shadow: 0 22px 70px #10182855; }
+dialog::backdrop { background: #10182888; }
+dialog form { display: grid; gap: 18px; padding: 22px; }
+.dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.dialog-heading h2 { margin: 0; color: #172235; font-size: 21px; }
+.dialog-heading p { margin: 5px 0 0; color: #687588; font-size: 13px; }
+.icon-button { width: 32px; height: 32px; border: 0; border-radius: 7px; color: #536173; background: #edf1f5; font-size: 20px; line-height: 1; }
+dialog label { display: grid; gap: 7px; color: #344052; font-size: 13px; font-weight: 600; }
+dialog input { width: 100%; padding: 10px 11px; border: 1px solid #b8c5d2; border-radius: 7px; color: #1b2430; background: white; font: inherit; }
+.form-error { min-height: 19px; margin: -8px 0 0; color: #b42318; font-size: 13px; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 9px; }
+.dialog-actions button { padding: 9px 13px; border: 1px solid #b8c5d2; border-radius: 7px; color: #263243; background: white; }
+.standalone-message { width: 100%; height: 100%; padding: 32px 42px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+.standalone-message h1 { margin: 0 0 18px; color: #172235; font-size: 27px; }
+.message-headers { display: grid; gap: 7px; padding-bottom: 20px; border-bottom: 1px solid #dfe4ea; color: #5b6878; font-size: 13px; line-height: 1.5; }
+.message-address-line { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 6px; align-items: start; }
+.message-address-label { padding-top: 4px; font-weight: 700; }
+.message-addresses { display: flex; flex-wrap: wrap; gap: 5px; }
+.address-chip { max-width: 100%; padding: 3px 7px; border: 1px solid transparent; border-radius: 6px; color: #405064; background: #edf1f5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.address-chip:hover { border-color: #77bdb5; background: #e1f4f1; }
+.address-chip.selected { border-color: #248d84; color: #123f3b; background: #ccefe9; box-shadow: 0 0 0 2px #44b9ab22; }
+.standalone-contact-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.standalone-contact-actions button { padding: 8px 11px; border: 1px solid #b8c5d2; border-radius: 7px; color: #263243; background: white; }
+.message-body { margin-top: 26px; color: #263243; line-height: 1.65; white-space: pre-wrap; }
+.message-html { overflow-wrap: anywhere; white-space: normal; }
+.message-html table { max-width: 100%; border-collapse: collapse; }
+.message-html td, .message-html th { padding: 4px; }
+.message-html pre { overflow-x: auto; white-space: pre-wrap; }
+.message-html img { max-width: 100%; height: auto; }
+.message-html img:not([src]) { display: none; }
+.remote-images-notice { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding: 11px 13px; border: 1px solid #d7e0e8; border-radius: 9px; color: #536173; background: #f2f6f9; font-size: 13px; }
+.remote-images-button { flex: 0 0 auto; padding: 8px 11px; border: 1px solid #b8c5d2; border-radius: 7px; color: #263243; background: white; }
+.received-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 28px; padding-top: 18px; border-top: 1px solid #dfe4ea; }
+.attachment-button { padding: 9px 12px; border: 1px solid #ccd5df; border-radius: 8px; color: #344052; background: white; }
+.attachment-button:hover { border-color: #248d84; background: #eef9f7; }
+.loading, .error { display: grid; min-height: 100%; place-items: center; color: #778395; text-align: center; }
+.error { color: #b42318; }
