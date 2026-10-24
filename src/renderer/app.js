@@ -35,7 +35,9 @@ const composeBodyEditor = document.querySelector('#compose-body-editor');
 const composeToolbar = document.querySelector('#compose-toolbar');
 const composeFormat = document.querySelector('#compose-format');
 const composeFontSize = document.querySelector('#compose-font-size');
+const composeFontFamily = document.querySelector('#compose-font-family');
 const composeTextColor = document.querySelector('#compose-text-color');
+const composeBackgroundColor = document.querySelector('#compose-background-color');
 const composeLinkUrl = document.querySelector('#compose-link-url');
 const composeTemplate = document.querySelector('#compose-template');
 const signatureDialog = document.querySelector('#signature-dialog');
@@ -71,6 +73,9 @@ const todoForm = document.querySelector('#todo-form');
 const todoList = document.querySelector('#todo-list');
 const todoError = document.querySelector('#todo-error');
 const todoCount = document.querySelector('#todo-count');
+const advancedSearchDialog = document.querySelector('#advanced-search-dialog');
+const advancedSearchForm = document.querySelector('#advanced-search-form');
+const advancedSearchError = document.querySelector('#advanced-search-error');
 const rulesDialog = document.querySelector('#rules-dialog');
 const ruleForm = document.querySelector('#rule-form');
 const ruleList = document.querySelector('#rule-list');
@@ -110,12 +115,16 @@ let folders = [];
 let localFolders = [];
 let messages = [];
 const selectedMessageIds = new Set();
+const expandedConversationKeys = new Set();
 let globalSearchTimer = null;
+let advancedSearchActive = false;
+let pendingOAuthTokens = null;
 let composeAttachments = [];
 const composeRecipients = { to: [], cc: [] };
 let autoSyncTimer = null;
 let composeSelectionRange = null;
 let lastAppliedComposeColor = null;
+let lastAppliedComposeBackground = null;
 let composerData = { signature: '', templates: [] };
 let syncInProgress = false;
 let viewingLocal = false;
@@ -144,6 +153,10 @@ let currentSettings = {
   autoSyncMinutes: 0,
   notificationsEnabled: true,
   fontSize: 15,
+  interfaceColor: '#6ee7d2',
+  minimizeToTray: false,
+  groupConversations: true,
+  autoUpdateEnabled: true,
   dataDirectory: ''
 };
 const lastAccountStorageKey = 'gestionmail.lastAccountId';
@@ -154,6 +167,29 @@ let columnWidths = { ...defaultColumnWidths };
 function applyInterfaceFontSize(value) {
   const size = [13, 14, 15, 16, 17].includes(Number(value)) ? Number(value) : 15;
   document.documentElement.style.setProperty('--ui-font-size', `${size}px`);
+}
+
+function applyInterfaceColor(value) {
+  const color = /^#[0-9a-f]{6}$/i.test(String(value || '')) ? String(value).toLowerCase() : '#6ee7d2';
+  const rgb = [1, 3, 5].map((index) => Number.parseInt(color.slice(index, index + 2), 16));
+  const toHex = (channels) => `#${channels.map((channel) => Math.round(channel).toString(16).padStart(2, '0')).join('')}`;
+  const mix = (target, amount) => toHex(rgb.map((channel, index) => channel + (target[index] - channel) * amount));
+  const linear = rgb.map((channel) => {
+    const normalized = channel / 255;
+    return normalized <= .04045 ? normalized / 12.92 : ((normalized + .055) / 1.055) ** 2.4;
+  });
+  const luminance = .2126 * linear[0] + .7152 * linear[1] + .0722 * linear[2];
+  const darkContrast = (luminance + .05) / (.014 + .05);
+  const lightContrast = 1.05 / (luminance + .05);
+  const root = document.documentElement.style;
+  root.setProperty('--accent-color', color);
+  root.setProperty('--accent-contrast', darkContrast >= lightContrast ? '#102033' : '#ffffff');
+  root.setProperty('--accent-strong', mix([0, 0, 0], .38));
+  root.setProperty('--accent-mid', mix([255, 255, 255], .38));
+  root.setProperty('--accent-soft', mix([255, 255, 255], .82));
+  root.setProperty('--accent-softer', mix([255, 255, 255], .9));
+  root.setProperty('--accent-ring', `${color}38`);
+  root.setProperty('--accent-ink', mix([16, 32, 51], .68));
 }
 
 let contextMenu = null;
@@ -346,8 +382,22 @@ window.gestionMail.onFolderCopyProgress((progress) => {
   if (progress.detail) statusLine.textContent = progress.detail;
 });
 
+window.gestionMail.onLocalFoldersRefreshed(async (result) => {
+  localFolders = Array.isArray(result?.folders) ? result.folders : localFolders;
+  renderLocalFolders();
+  if (viewingLocal && result?.imported) {
+    messages = await window.gestionMail.listMessages('__local__', selectedFolder);
+    renderMessages(searchInput.value);
+    statusLine.textContent = `${result.imported} nouveau${result.imported > 1 ? 'x' : ''} fichier${result.imported > 1 ? 's' : ''} .eml indexé${result.imported > 1 ? 's' : ''} en arrière-plan.`;
+  }
+});
+
 function lastFolderStorageKey(accountId) {
   return `gestionmail.lastFolder.${accountId}`;
+}
+
+function folderCacheStorageKey(accountId) {
+  return `gestionmail.folders.${accountId}`;
 }
 
 function updateTodoCount() {
@@ -625,15 +675,42 @@ function readableError(error) {
 function accountPayload() {
   const data = new FormData(accountForm);
   const account = Object.fromEntries(data.entries());
+  account.protocol = accountForm.elements.protocol.value;
   account.incomingSecure = data.has('incomingSecure');
   account.outgoingSecure = data.has('outgoingSecure');
+  if (account.authType === 'oauth2' && pendingOAuthTokens) Object.assign(account, pendingOAuthTokens);
   return account;
+}
+
+function updateAccountAuthFields() {
+  const oauth = accountForm.elements.authType.value === 'oauth2';
+  document.querySelector('#oauth-fields').hidden = !oauth;
+  document.querySelector('#password-field').hidden = oauth;
+  accountForm.elements.password.required = !oauth && !accountForm.elements.id.value;
+  accountForm.elements.oauthClientId.required = oauth;
+  accountForm.elements.protocol.disabled = oauth;
+  if (oauth) accountForm.elements.protocol.value = 'imap';
+  document.querySelector('#oauth-tenant-field').hidden = !oauth || accountForm.elements.oauthProvider.value !== 'microsoft';
+}
+
+function applyOAuthProviderDefaults(force = false) {
+  const provider = accountForm.elements.oauthProvider.value;
+  const values = provider === 'microsoft'
+    ? { incomingHost: 'outlook.office365.com', incomingPort: '993', outgoingHost: 'smtp.office365.com', outgoingPort: '587', outgoingSecure: false }
+    : { incomingHost: 'imap.gmail.com', incomingPort: '993', outgoingHost: 'smtp.gmail.com', outgoingPort: '465', outgoingSecure: true };
+  for (const field of ['incomingHost', 'incomingPort', 'outgoingHost', 'outgoingPort']) {
+    if (force || !accountForm.elements[field].value) accountForm.elements[field].value = values[field];
+  }
+  accountForm.elements.incomingSecure.checked = true;
+  accountForm.elements.outgoingSecure.checked = values.outgoingSecure;
+  updateAccountAuthFields();
 }
 
 function openAccountDialog(account = null) {
   accountForm.reset();
   accountForm.elements.incomingPort.value = '993';
   accountForm.elements.outgoingPort.value = '465';
+  pendingOAuthTokens = null;
   accountForm.elements.password.required = !account;
   deleteAccountButton.hidden = !account;
   document.querySelector('#account-dialog-title').textContent = account ? 'Modifier le compte' : 'Ajouter un compte';
@@ -641,12 +718,15 @@ function openAccountDialog(account = null) {
     ? 'Laissez vide pour conserver le mot de passe actuel.'
     : 'Il sera chiffré avec la protection de votre session Windows.';
   if (account) {
-    for (const field of ['id', 'name', 'email', 'protocol', 'incomingHost', 'incomingPort', 'outgoingHost', 'outgoingPort', 'username']) {
+    for (const field of ['id', 'name', 'email', 'protocol', 'authType', 'oauthProvider', 'oauthClientId', 'oauthTenant', 'incomingHost', 'incomingPort', 'outgoingHost', 'outgoingPort', 'username']) {
       accountForm.elements[field].value = account[field] ?? '';
     }
     accountForm.elements.incomingSecure.checked = Boolean(account.incomingSecure);
     accountForm.elements.outgoingSecure.checked = Boolean(account.outgoingSecure);
   }
+  if (!accountForm.elements.authType.value) accountForm.elements.authType.value = 'password';
+  if (!accountForm.elements.oauthProvider.value) accountForm.elements.oauthProvider.value = 'google';
+  updateAccountAuthFields();
   accountError.textContent = '';
   accountDialog.showModal();
 }
@@ -1213,13 +1293,39 @@ function applyComposeTextColor(color) {
   queueDraftSave();
 }
 
+function applyComposeBackgroundColor(color) {
+  if (!composeSelectionRange || !composeBodyEditor.contains(composeSelectionRange.commonAncestorContainer)) {
+    runComposeCommand('hiliteColor', color);
+    return;
+  }
+  const range = composeSelectionRange.cloneRange();
+  if (range.collapsed) {
+    runComposeCommand('hiliteColor', color);
+    return;
+  }
+  const span = document.createElement('span');
+  span.style.backgroundColor = color;
+  span.append(range.extractContents());
+  range.insertNode(span);
+  const highlightedRange = document.createRange();
+  highlightedRange.selectNodeContents(span);
+  composeSelectionRange = highlightedRange.cloneRange();
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(highlightedRange);
+  composeBodyEditor.focus();
+  queueDraftSave();
+}
+
 function resetComposeBody(value = '', htmlValue = '') {
   composeBodyEditor.innerHTML = htmlValue || (value ? plainTextToHtml(value) : '');
   composeSelectionRange = null;
   composeLinkUrl.value = '';
   composeFormat.value = 'p';
   composeFontSize.value = '3';
+  composeFontFamily.value = '';
   composeTextColor.value = '#263243';
+  composeBackgroundColor.value = '#fff2a8';
 }
 
 function renderComposeTemplates() {
@@ -1259,6 +1365,9 @@ composeToolbar.querySelectorAll('button[data-command]').forEach((button) => {
 });
 composeFormat.addEventListener('change', () => runComposeCommand('formatBlock', composeFormat.value));
 composeFontSize.addEventListener('change', () => runComposeCommand('fontSize', composeFontSize.value));
+composeFontFamily.addEventListener('change', () => {
+  if (composeFontFamily.value) runComposeCommand('fontName', composeFontFamily.value);
+});
 composeTextColor.addEventListener('pointerdown', () => {
   lastAppliedComposeColor = null;
 });
@@ -1269,6 +1378,14 @@ function handleComposeTextColor() {
 }
 composeTextColor.addEventListener('input', handleComposeTextColor);
 composeTextColor.addEventListener('change', handleComposeTextColor);
+composeBackgroundColor.addEventListener('pointerdown', () => { lastAppliedComposeBackground = null; });
+function handleComposeBackgroundColor() {
+  if (lastAppliedComposeBackground === composeBackgroundColor.value) return;
+  lastAppliedComposeBackground = composeBackgroundColor.value;
+  applyComposeBackgroundColor(composeBackgroundColor.value);
+}
+composeBackgroundColor.addEventListener('input', handleComposeBackgroundColor);
+composeBackgroundColor.addEventListener('change', handleComposeBackgroundColor);
 document.querySelector('#compose-add-link').addEventListener('click', () => {
   let value = composeLinkUrl.value.trim();
   if (!value) {
@@ -1737,6 +1854,19 @@ function appendLocalFolderNodes(container, nodes, depth = 0) {
       { label: 'Ouvrir dans GestionMail', action: () => selectLocalFolder(folder) },
       { label: 'Ouvrir dans l’Explorateur Windows', action: () => window.gestionMail.openLocalFolder(folder.id) },
       { separator: true },
+      { label: 'Renommer…', action: async () => {
+        const name = window.prompt('Nouveau nom du dossier :', folder.name);
+        if (!name || name.trim() === folder.name) return;
+        await window.gestionMail.renameLocalFolder(folder.id, name.trim());
+        await loadLocalFolders();
+        statusLine.textContent = `Dossier renommé « ${name.trim()} ».`;
+      } },
+      { label: 'Dupliquer le dossier et son contenu', action: async () => {
+        statusLine.textContent = `Duplication de « ${folder.name} »…`;
+        const result = await window.gestionMail.duplicateLocalFolder(folder.id);
+        await loadLocalFolders();
+        statusLine.textContent = `${result.folderCount} dossier${result.folderCount > 1 ? 's' : ''} dupliqué${result.folderCount > 1 ? 's' : ''}.`;
+      } },
       { label: 'Créer un sous-dossier…', action: () => createLocalFolder(folder.id) },
       {
         label: 'Déplacer à la racine',
@@ -1746,6 +1876,14 @@ function appendLocalFolderNodes(container, nodes, depth = 0) {
           await loadLocalFolders();
         }
       },
+      { separator: true },
+      ...localFolders.filter((target) => target.id !== folder.id).slice(0, 20).map((target) => ({
+        label: `Déplacer dans « ${target.name} »`,
+        action: async () => {
+          await window.gestionMail.moveLocalFolder(folder.id, target.id);
+          await loadLocalFolders();
+        }
+      })),
       { separator: true },
       { label: 'Couleur du dossier', disabled: true },
       ...localFolderColorChoices.map(([color, label, marker]) => ({
@@ -1957,9 +2095,23 @@ async function refreshCurrentMessageList() {
 
 function renderMessages(filter = '') {
   const query = filter.trim().toLocaleLowerCase('fr');
-  const visible = query
+  let visible = query
     ? messages.filter((message) => `${message.sender} ${message.subject} ${message.preview}`.toLocaleLowerCase('fr').includes(query))
     : messages;
+  if (currentSettings.groupConversations !== false) {
+    const conversations = new Map();
+    for (const message of visible) {
+      const key = message.conversationKey || String(message.subject || '(sans objet)').replace(/^\s*((re|réf|ref|fw|fwd|tr)\s*:\s*)+/i, '').trim().toLocaleLowerCase('fr');
+      const existing = conversations.get(key);
+      if (existing) existing.push(message);
+      else conversations.set(key, [message]);
+    }
+    visible = [...conversations.entries()].flatMap(([key, conversation]) => {
+      if (conversation.length === 1) return conversation;
+      if (expandedConversationKeys.has(key)) return conversation.map((message, index) => ({ ...message, conversationKey: key, conversationGroupCount: index === 0 ? conversation.length : 0, conversationExpanded: true, conversationCount: index === 0 ? conversation.length : 0 }));
+      return [{ ...conversation[0], conversationKey: key, conversationGroupCount: conversation.length, conversationCount: conversation.length }];
+    });
+  }
   messageList.replaceChildren();
   if (!visible.length) {
     const empty = document.createElement('div');
@@ -2009,7 +2161,7 @@ function renderMessages(filter = '') {
 
     const subject = document.createElement('div');
     subject.className = 'message-subject';
-    subject.textContent = message.subject || '(Sans objet)';
+    subject.textContent = `${message.subject || '(Sans objet)'}${message.conversationCount > 1 ? `  ·  ${message.conversationCount} messages` : ''}${message.attachmentCount ? '  📎' : ''}`;
     const preview = document.createElement('div');
     preview.className = 'message-preview';
     preview.textContent = message.preview || '';
@@ -2023,7 +2175,24 @@ function renderMessages(filter = '') {
       }
     });
     row.addEventListener('contextmenu', (event) => showMessageContextMenu(event, message, row));
-    wrapper.append(checkbox, row);
+    const controls = document.createElement('div');
+    controls.className = 'message-select-controls';
+    controls.append(checkbox);
+    if (message.conversationGroupCount > 1) {
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'conversation-toggle';
+      toggle.textContent = message.conversationExpanded ? '▾' : '▸';
+      toggle.title = message.conversationExpanded ? 'Replier la conversation' : `Afficher les ${message.conversationGroupCount} messages`;
+      toggle.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (expandedConversationKeys.has(message.conversationKey)) expandedConversationKeys.delete(message.conversationKey);
+        else expandedConversationKeys.add(message.conversationKey);
+        renderMessages(filter);
+      });
+      controls.append(toggle);
+    }
+    wrapper.append(controls, row);
     messageList.append(wrapper);
   }
 }
@@ -2115,20 +2284,29 @@ async function selectAccount(accountId) {
   composeButton.disabled = false;
   searchInput.disabled = false;
   const account = accounts.find((item) => item.id === accountId);
-  statusLine.textContent = `Lecture des dossiers de ${account?.email || ''}…`;
-  let foldersLoaded = true;
   try {
-    folders = await window.gestionMail.listFolders(accountId);
-  } catch (error) {
-    foldersLoaded = false;
-    folders = [{ path: 'INBOX', name: 'Boîte de réception' }];
-    statusLine.textContent = `Dossiers indisponibles : ${readableError(error)}`;
-  }
+    const cached = JSON.parse(localStorage.getItem(folderCacheStorageKey(accountId)) || '[]');
+    folders = Array.isArray(cached) && cached.length ? cached : [{ path: 'INBOX', name: 'Boîte de réception', selectable: true }];
+  } catch { folders = [{ path: 'INBOX', name: 'Boîte de réception', selectable: true }]; }
   if (!folders.some((folder) => folder.path === selectedFolder && folder.selectable !== false) && folders.length) {
     selectedFolder = folders.find((folder) => folder.selectable !== false)?.path || 'INBOX';
   }
   renderFolders();
-  await selectFolder(selectedFolder, foldersLoaded);
+  await selectFolder(selectedFolder, false);
+  statusLine.textContent = `Messages locaux affichés — actualisation différée des dossiers de ${account?.email || ''}…`;
+  setTimeout(async () => {
+    try {
+      const remoteFolders = await window.gestionMail.listFolders(accountId);
+      localStorage.setItem(folderCacheStorageKey(accountId), JSON.stringify(remoteFolders));
+      if (selectedAccountId !== accountId || viewingLocal) return;
+      folders = remoteFolders;
+      if (!folders.some((folder) => folder.path === selectedFolder && folder.selectable !== false)) selectedFolder = folders.find((folder) => folder.selectable !== false)?.path || 'INBOX';
+      renderFolders();
+      statusLine.textContent = `${messages.length} message${messages.length > 1 ? 's' : ''} localement — dossiers serveur actualisés.`;
+    } catch (error) {
+      if (selectedAccountId === accountId && !viewingLocal) statusLine.textContent = `Messages locaux disponibles — connexion aux dossiers différée : ${readableError(error)}`;
+    }
+  }, 50);
 }
 
 function configureAutoSync() {
@@ -2147,8 +2325,16 @@ async function openSettingsDialog() {
     renderAccounts();
     settingsForm.elements.autoSyncMinutes.value = String(currentSettings.autoSyncMinutes);
     settingsForm.elements.fontSize.value = String(currentSettings.fontSize);
+    settingsForm.elements.interfaceColor.value = currentSettings.interfaceColor || '#6ee7d2';
     settingsForm.elements.notificationsEnabled.checked = Boolean(currentSettings.notificationsEnabled);
+    settingsForm.elements.minimizeToTray.checked = Boolean(currentSettings.minimizeToTray);
+    settingsForm.elements.groupConversations.checked = currentSettings.groupConversations !== false;
+    settingsForm.elements.autoUpdateEnabled.checked = currentSettings.autoUpdateEnabled !== false;
     settingsForm.elements.dataDirectory.value = currentSettings.dataDirectory;
+    const metrics = await window.gestionMail.getStartupPerformance();
+    document.querySelector('#startup-performance').textContent = metrics.windowReadyMs === null
+      ? 'Mesure du démarrage en cours…'
+      : `Démarrage de la fenêtre : ${metrics.windowReadyMs} ms — dernière analyse locale : ${metrics.localScanMs ?? 'en attente'} ms (${metrics.localScanFiles || 0} nouveau(x) fichier(s)).`;
     settingsError.textContent = '';
     settingsDialog.showModal();
   } catch (error) {
@@ -2537,6 +2723,24 @@ document.querySelector('#cancel-dialog').addEventListener('click', () => account
 accountForm.elements.protocol.addEventListener('change', () => {
   accountForm.elements.incomingPort.value = accountForm.elements.protocol.value === 'pop3' ? '995' : '993';
 });
+accountForm.elements.authType.addEventListener('change', updateAccountAuthFields);
+accountForm.elements.oauthProvider.addEventListener('change', () => applyOAuthProviderDefaults(true));
+document.querySelector('#connect-oauth').addEventListener('click', async () => {
+  const status = document.querySelector('#oauth-status');
+  status.textContent = 'Ouverture du navigateur et attente de l’autorisation…';
+  try {
+    pendingOAuthTokens = await window.gestionMail.authorizeOAuth({
+      provider: accountForm.elements.oauthProvider.value,
+      clientId: accountForm.elements.oauthClientId.value,
+      tenant: accountForm.elements.oauthTenant.value,
+      email: accountForm.elements.email.value
+    });
+    status.textContent = 'Compte OAuth2 connecté. Vous pouvez tester et enregistrer.';
+  } catch (error) {
+    pendingOAuthTokens = null;
+    status.textContent = readableError(error);
+  }
+});
 
 accountForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -2548,6 +2752,7 @@ accountForm.addEventListener('submit', async (event) => {
     const saved = await window.gestionMail.saveAccount(account);
     selectedAccountId = saved.id;
     accountForm.reset();
+    pendingOAuthTokens = null;
     accountForm.elements.incomingPort.value = '993';
     accountForm.elements.outgoingPort.value = '465';
     accountDialog.close();
@@ -2924,6 +3129,8 @@ recipientPickerForm.addEventListener('submit', (event) => {
 });
 document.querySelector('#close-settings').addEventListener('click', () => settingsDialog.close());
 document.querySelector('#cancel-settings').addEventListener('click', () => settingsDialog.close());
+settingsForm.elements.interfaceColor.addEventListener('input', (event) => applyInterfaceColor(event.target.value));
+settingsDialog.addEventListener('close', () => applyInterfaceColor(currentSettings.interfaceColor));
 document.querySelector('#choose-data-directory').addEventListener('click', async () => {
   try {
     const directory = await window.gestionMail.chooseDataDirectory();
@@ -2940,12 +3147,17 @@ settingsForm.addEventListener('submit', async (event) => {
     const values = {
       autoSyncMinutes: Number(settingsForm.elements.autoSyncMinutes.value),
       fontSize: Number(settingsForm.elements.fontSize.value),
+      interfaceColor: settingsForm.elements.interfaceColor.value,
       notificationsEnabled: settingsForm.elements.notificationsEnabled.checked,
+      minimizeToTray: settingsForm.elements.minimizeToTray.checked,
+      groupConversations: settingsForm.elements.groupConversations.checked,
+      autoUpdateEnabled: settingsForm.elements.autoUpdateEnabled.checked,
       dataDirectory: settingsForm.elements.dataDirectory.value
     };
     const result = await window.gestionMail.saveSettings(values);
     currentSettings = result.settings;
     applyInterfaceFontSize(currentSettings.fontSize);
+    applyInterfaceColor(currentSettings.interfaceColor);
     autoSyncSelect.value = String(currentSettings.autoSyncMinutes);
     configureAutoSync();
     await loadLocalFolders();
@@ -2962,6 +3174,47 @@ settingsForm.addEventListener('submit', async (event) => {
   } finally {
     saveSettingsButton.disabled = false;
   }
+});
+
+document.querySelector('#create-backup').addEventListener('click', async () => {
+  settingsError.textContent = 'Création de la sauvegarde complète…';
+  try {
+    const result = await window.gestionMail.createBackup();
+    settingsError.textContent = result.created ? `Sauvegarde créée : ${result.path}` : '';
+  } catch (error) {
+    settingsError.textContent = readableError(error);
+  }
+});
+
+document.querySelector('#restore-backup').addEventListener('click', async () => {
+  if (!window.confirm('Restaurer une sauvegarde complète ? GestionMail redémarrera et conservera une copie des données actuelles.')) return;
+  settingsError.textContent = 'Sélection de la sauvegarde à restaurer…';
+  try {
+    const result = await window.gestionMail.restoreBackup();
+    settingsError.textContent = result.scheduled ? 'Restauration programmée, redémarrage…' : '';
+  } catch (error) {
+    settingsError.textContent = readableError(error);
+  }
+});
+
+function showUpdateStatus(status) {
+  document.querySelector('#update-status').textContent = status.message || '';
+  document.querySelector('#download-update').hidden = status.state !== 'available';
+  document.querySelector('#install-update').hidden = status.state !== 'downloaded';
+}
+window.gestionMail.onUpdateStatus(showUpdateStatus);
+document.querySelector('#check-updates').addEventListener('click', async () => {
+  try { showUpdateStatus(await window.gestionMail.checkForUpdates()); }
+  catch (error) { showUpdateStatus({ state: 'error', message: readableError(error) }); }
+});
+document.querySelector('#download-update').addEventListener('click', async () => {
+  try { showUpdateStatus({ state: 'downloading', message: 'Téléchargement de la mise à jour…' }); await window.gestionMail.downloadUpdate(); }
+  catch (error) { showUpdateStatus({ state: 'error', message: readableError(error) }); }
+});
+document.querySelector('#install-update').addEventListener('click', async () => {
+  if (!window.confirm('Installer la mise à jour téléchargée et redémarrer GestionMail ?')) return;
+  try { await window.gestionMail.installUpdate(); }
+  catch (error) { showUpdateStatus({ state: 'error', message: readableError(error) }); }
 });
 
 composeForm.addEventListener('submit', async (event) => {
@@ -3076,6 +3329,7 @@ document.querySelector('#bulk-trash').addEventListener('click', async () => {
 
 async function runMessageSearch() {
   clearTimeout(globalSearchTimer);
+  advancedSearchActive = false;
   const query = searchInput.value.trim();
   if (searchScope.value === 'folder') {
     renderMessages(query);
@@ -3092,6 +3346,33 @@ async function runMessageSearch() {
   renderMessages('');
   statusLine.textContent = `${messages.length} résultat${messages.length > 1 ? 's' : ''} dans tous les comptes et dossiers locaux.`;
 }
+
+document.querySelector('#advanced-search-button').addEventListener('click', () => {
+  advancedSearchError.textContent = '';
+  advancedSearchDialog.showModal();
+});
+document.querySelector('#close-advanced-search').addEventListener('click', () => advancedSearchDialog.close());
+document.querySelector('#cancel-advanced-search').addEventListener('click', () => advancedSearchDialog.close());
+document.querySelector('#reset-advanced-search').addEventListener('click', () => advancedSearchForm.reset());
+advancedSearchForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  advancedSearchError.textContent = 'Recherche en cours…';
+  try {
+    const values = Object.fromEntries(new FormData(advancedSearchForm).entries());
+    values.hasAttachments = values.hasAttachments === 'yes' ? true : values.hasAttachments === 'no' ? false : '';
+    messages = await window.gestionMail.searchMessages(values);
+    advancedSearchActive = true;
+    searchScope.value = 'global';
+    searchInput.value = values.query || '';
+    selectedMessageIds.clear();
+    updateBulkActions();
+    renderMessages('');
+    advancedSearchDialog.close();
+    statusLine.textContent = `${messages.length} résultat${messages.length > 1 ? 's' : ''} pour la recherche avancée.`;
+  } catch (error) {
+    advancedSearchError.textContent = readableError(error);
+  }
+});
 
 searchInput.addEventListener('input', () => {
   clearTimeout(globalSearchTimer);
@@ -3118,6 +3399,7 @@ window.addEventListener('focus', async () => {
 async function initialiseApplication() {
   currentSettings = await window.gestionMail.getSettings();
   applyInterfaceFontSize(currentSettings.fontSize);
+  applyInterfaceColor(currentSettings.interfaceColor);
   autoSyncSelect.value = String(currentSettings.autoSyncMinutes);
   configureAutoSync();
   await Promise.all([loadLocalFolders(), loadContacts(), loadTodos(), loadDrafts(), loadAccounts()]);

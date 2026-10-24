@@ -370,28 +370,73 @@ function storeMessage(message) {
 function listMessages(accountId, folder = 'INBOX', limit = 100) {
   return db().prepare(`
     SELECT id, account_id AS accountId, subject, sender, recipients,
-           received_at AS receivedAt, preview, is_read AS isRead
+           received_at AS receivedAt, preview, is_read AS isRead,
+           (SELECT COUNT(*) FROM attachments WHERE message_id = messages.id) AS attachmentCount
       FROM messages
      WHERE account_id = ? AND folder = ?
      ORDER BY COALESCE(received_at, created_at) DESC
      LIMIT ?
-  `).all(accountId, folder, Math.min(Math.max(Number(limit) || 100, 1), 500));
+  `).all(accountId, folder, Math.min(Math.max(Number(limit) || 100, 1), 500)).map(addConversationKey);
 }
 
-function searchMessages(query, limit = 300) {
-  const value = `%${String(query || '').trim().replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
-  if (value === '%%') return [];
+function conversationKey(subject) {
+  return String(subject || '(sans objet)')
+    .replace(/^\s*((re|réf|ref|fw|fwd|tr)\s*:\s*)+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase('fr') || '(sans objet)';
+}
+
+function addConversationKey(message) {
+  return { ...message, attachmentCount: Number(message.attachmentCount || 0), conversationKey: conversationKey(message.subject) };
+}
+
+function searchMessages(criteria, limit = 300) {
+  const filters = typeof criteria === 'string' ? { query: criteria } : (criteria || {});
+  const clauses = [];
+  const parameters = [];
+  const like = (value) => `%${String(value || '').trim().replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
+  if (String(filters.query || '').trim()) {
+    const value = like(filters.query);
+    clauses.push(`(subject LIKE ? ESCAPE '\\' COLLATE NOCASE OR sender LIKE ? ESCAPE '\\' COLLATE NOCASE OR recipients LIKE ? ESCAPE '\\' COLLATE NOCASE OR text_body LIKE ? ESCAPE '\\' COLLATE NOCASE)`);
+    parameters.push(value, value, value, value);
+  }
+  if (String(filters.sender || '').trim()) {
+    clauses.push("sender LIKE ? ESCAPE '\\' COLLATE NOCASE");
+    parameters.push(like(filters.sender));
+  }
+  if (String(filters.dateFrom || '').trim()) {
+    clauses.push('date(COALESCE(received_at, created_at)) >= date(?)');
+    parameters.push(String(filters.dateFrom));
+  }
+  if (String(filters.dateTo || '').trim()) {
+    clauses.push('date(COALESCE(received_at, created_at)) <= date(?)');
+    parameters.push(String(filters.dateTo));
+  }
+  if (filters.readState === 'read') clauses.push('is_read = 1');
+  if (filters.readState === 'unread') clauses.push('is_read = 0');
+  if (filters.hasAttachments === true || filters.hasAttachments === 'yes') clauses.push('EXISTS (SELECT 1 FROM attachments WHERE message_id = messages.id)');
+  if (filters.hasAttachments === false || filters.hasAttachments === 'no') clauses.push('NOT EXISTS (SELECT 1 FROM attachments WHERE message_id = messages.id)');
+  if (!clauses.length) return [];
+  parameters.push(Math.min(Math.max(Number(limit) || 300, 1), 1000));
   return db().prepare(`
     SELECT id, account_id AS accountId, folder, subject, sender, recipients,
-           received_at AS receivedAt, preview, is_read AS isRead
+           received_at AS receivedAt, preview, is_read AS isRead,
+           (SELECT COUNT(*) FROM attachments WHERE message_id = messages.id) AS attachmentCount
       FROM messages
-     WHERE subject LIKE ? ESCAPE '\\' COLLATE NOCASE
-        OR sender LIKE ? ESCAPE '\\' COLLATE NOCASE
-        OR recipients LIKE ? ESCAPE '\\' COLLATE NOCASE
-        OR text_body LIKE ? ESCAPE '\\' COLLATE NOCASE
+     WHERE ${clauses.join(' AND ')}
      ORDER BY COALESCE(received_at, created_at) DESC
      LIMIT ?
-  `).all(value, value, value, value, Math.min(Math.max(Number(limit) || 300, 1), 1000));
+  `).all(...parameters).map(addConversationKey);
+}
+
+function countUnreadMessages() {
+  return Number(db().prepare('SELECT COUNT(*) AS count FROM messages WHERE is_read = 0').get().count || 0);
+}
+
+function checkpointDatabase() {
+  db().exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  return databasePath();
 }
 
 function listDrafts() {
@@ -538,6 +583,8 @@ function getMessage(id) {
     allowedStyles: {
       '*': {
         color: [/^#[0-9a-f]{3,8}$/i, /^rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)$/i],
+        'background-color': [/^#[0-9a-f]{3,8}$/i, /^rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)$/i],
+        'font-family': [/^[a-z0-9 ,'-]{1,80}$/i],
         'font-size': [/^(?:xx-small|x-small|small|medium|large|x-large|xx-large|\d+(?:\.\d+)?(?:px|pt|em|rem|%))$/i],
         'font-weight': [/^(?:normal|bold|[1-9]00)$/i],
         'font-style': [/^(?:normal|italic|oblique)$/i],
@@ -988,6 +1035,63 @@ function moveLocalFolder(localFolderId, targetParentId = null) {
   }
 }
 
+function renameLocalFolder(localFolderId, name) {
+  const database = db();
+  const cleanName = String(name || '').trim();
+  if (!cleanName) throw new Error('Le nom du dossier local est obligatoire.');
+  if (cleanName.length > 80) throw new Error('Le nom du dossier local est trop long.');
+  const folders = database.prepare('SELECT id, name, parent_id AS parentId, disk_name AS diskName FROM local_folders').all();
+  const source = folders.find((folder) => Number(folder.id) === Number(localFolderId));
+  if (!source) throw new Error('Dossier local introuvable.');
+  const duplicate = folders.find((folder) => Number(folder.id) !== Number(source.id) && Number(folder.parentId) === Number(source.parentId) && String(folder.name).localeCompare(cleanName, 'fr', { sensitivity: 'base' }) === 0);
+  if (duplicate) throw new Error('Un dossier local porte déjà ce nom.');
+  const parent = source.parentId === null ? null : folders.find((folder) => Number(folder.id) === Number(source.parentId));
+  const targetDiskName = uniqueDiskName(database, cleanName, parent?.diskName || '');
+  const sourceDirectory = folderPathFromDiskName(source.diskName);
+  const targetDirectory = folderPathFromDiskName(targetDiskName);
+  const sourcePrefix = `${source.diskName}${path.sep}`.toLocaleLowerCase('en');
+  fs.renameSync(sourceDirectory, targetDirectory);
+  database.exec('BEGIN');
+  try {
+    database.prepare('UPDATE local_folders SET name = ?, disk_name = ? WHERE id = ?').run(cleanName, targetDiskName, Number(source.id));
+    const updateChild = database.prepare('UPDATE local_folders SET disk_name = ? WHERE id = ?');
+    for (const child of folders) {
+      if (!String(child.diskName).toLocaleLowerCase('en').startsWith(sourcePrefix)) continue;
+      updateChild.run(`${targetDiskName}${String(child.diskName).slice(String(source.diskName).length)}`, Number(child.id));
+    }
+    database.exec('COMMIT');
+    return { renamed: true, id: Number(source.id), name: cleanName, path: targetDirectory };
+  } catch (error) {
+    database.exec('ROLLBACK');
+    if (fs.existsSync(targetDirectory) && !fs.existsSync(sourceDirectory)) fs.renameSync(targetDirectory, sourceDirectory);
+    throw error;
+  }
+}
+
+function duplicateLocalFolderTree(localFolderId) {
+  const database = db();
+  const folders = database.prepare('SELECT id, name, parent_id AS parentId FROM local_folders ORDER BY id').all();
+  const root = folders.find((folder) => Number(folder.id) === Number(localFolderId));
+  if (!root) throw new Error('Dossier local introuvable.');
+  const created = new Map();
+  const copyFolder = (source, targetParentId, preferredName = source.name) => {
+    let name = preferredName;
+    let suffix = 1;
+    while (database.prepare('SELECT 1 FROM local_folders WHERE name = ? COLLATE NOCASE AND parent_id IS ?').get(name, targetParentId)) {
+      suffix += 1;
+      name = `${preferredName} (${suffix})`;
+    }
+    const target = createLocalFolder(name, targetParentId);
+    created.set(Number(source.id), target);
+    const messages = database.prepare("SELECT id FROM messages WHERE account_id = '__local__' AND folder = ?").all(`local:${source.id}`);
+    for (const message of messages) copyMessageToLocal(message.id, target.id);
+    for (const child of folders.filter((folder) => Number(folder.parentId) === Number(source.id))) copyFolder(child, target.id);
+    return target;
+  };
+  const copy = copyFolder(root, root.parentId === null ? null : Number(root.parentId), `${root.name} - copie`);
+  return { folder: copy, folderCount: created.size };
+}
+
 function deleteLocalFolder(localFolderId) {
   const database = db();
   const folderKey = `local:${Number(localFolderId)}`;
@@ -1249,7 +1353,9 @@ function deleteContactGroup(groupId) {
 }
 
 module.exports = {
+  checkpointDatabase,
   changeDataDirectory,
+  countUnreadMessages,
   deleteContact,
   deleteContactGroup,
   deleteDraft,
@@ -1259,6 +1365,7 @@ module.exports = {
   copyStoredFolderToLocal,
   copyStoredFolderTreeToLocal,
   createLocalFolder,
+  duplicateLocalFolderTree,
   deleteLocalFolder,
   deleteLocalFolderTree,
   getAttachment,
@@ -1276,6 +1383,7 @@ module.exports = {
   listUnindexedEmlFiles,
   mergeDuplicateContacts,
   moveLocalFolder,
+  renameLocalFolder,
   registerLocalEmlFile,
   removeLocalMessage,
   setMessageRead,

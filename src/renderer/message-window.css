@@ -4,6 +4,13 @@
   color: #1b2430;
   background: #fafbfc;
   --ui-font-size: 15px;
+  --accent-color: #6ee7d2;
+  --accent-contrast: #102033;
+  --accent-strong: #429286;
+  --accent-mid: #a6f0e4;
+  --accent-soft: #e5fbf7;
+  --accent-ring: #6ee7d238;
+  --accent-ink: #304f58;
 }
 
 * { box-sizing: border-box; }
@@ -11,7 +18,7 @@ html, body { width: 100%; height: 100%; }
 body { margin: 0; overflow: hidden; font-size: var(--ui-font-size); }
 button { font: inherit; cursor: pointer; }
 button:disabled { cursor: wait; opacity: .6; }
-.primary { border-color: #248d84 !important; color: white !important; background: #248d84 !important; }
+.primary { border-color: var(--accent-strong) !important; color: var(--accent-contrast) !important; background: var(--accent-color) !important; }
 dialog { width: min(440px, calc(100vw - 32px)); padding: 0; border: 0; border-radius: 12px; box-shadow: 0 22px 70px #10182855; }
 dialog::backdrop { background: #10182888; }
 dialog form { display: grid; gap: 18px; padding: 22px; }
@@ -31,8 +38,8 @@ dialog input { width: 100%; padding: 10px 11px; border: 1px solid #b8c5d2; borde
 .message-address-label { padding-top: 4px; font-weight: 700; }
 .message-addresses { display: flex; flex-wrap: wrap; gap: 5px; }
 .address-chip { max-width: 100%; padding: 3px 7px; border: 1px solid transparent; border-radius: 6px; color: #405064; background: #edf1f5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-.address-chip:hover { border-color: #77bdb5; background: #e1f4f1; }
-.address-chip.selected { border-color: #248d84; color: #123f3b; background: #ccefe9; box-shadow: 0 0 0 2px #44b9ab22; }
+.address-chip:hover { border-color: var(--accent-mid); background: var(--accent-soft); }
+.address-chip.selected { border-color: var(--accent-strong); color: var(--accent-ink); background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent-ring); }
 .standalone-contact-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
 .standalone-contact-actions button { padding: 8px 11px; border: 1px solid #b8c5d2; border-radius: 7px; color: #263243; background: white; }
 .message-body { margin-top: 26px; color: #263243; line-height: 1.65; white-space: pre-wrap; }
@@ -46,6 +53,6 @@ dialog input { width: 100%; padding: 10px 11px; border: 1px solid #b8c5d2; borde
 .remote-images-button { flex: 0 0 auto; padding: 8px 11px; border: 1px solid #b8c5d2; border-radius: 7px; color: #263243; background: white; }
 .received-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 28px; padding-top: 18px; border-top: 1px solid #dfe4ea; }
 .attachment-button { padding: 9px 12px; border: 1px solid #ccd5df; border-radius: 8px; color: #344052; background: white; }
-.attachment-button:hover { border-color: #248d84; background: #eef9f7; }
+.attachment-button:hover { border-color: var(--accent-strong); background: var(--accent-soft); }
 .loading, .error { display: grid; min-height: 100%; place-items: center; color: #778395; text-align: center; }
 .error { color: #b42318; }

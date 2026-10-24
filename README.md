@@ -48,9 +48,27 @@ La version actuelle permet également :
 - de conserver une liste TODO locale depuis le bouton discret en bas à gauche ;
 - de rouvrir automatiquement le dernier compte et le dernier dossier consultés ;
 - de redimensionner les colonnes principales.
-- de choisir la taille générale du texte depuis les paramètres.
+- de choisir la taille générale du texte et la couleur principale de l’interface depuis les paramètres ;
+- d’adapter automatiquement les contrastes du thème, y compris dans les fenêtres de message séparées ;
+- de réduire l’application dans la zone de notification Windows et de la piloter depuis son petit menu.
+- de mesurer le démarrage, d’indexer les fichiers `.eml` en arrière-plan et de différer la connexion IMAP en affichant d’abord les données locales ;
+- de regrouper les messages par conversation avec dépliage, et d’effectuer une recherche avancée par date, expéditeur, pièces jointes et état de lecture ;
+- de renommer, dupliquer et déplacer les dossiers locaux depuis leur menu contextuel ;
+- de créer et restaurer une sauvegarde complète des comptes, réglages, contacts, règles, messages et dossiers locaux ;
+- d’afficher le nombre de messages non lus dans l’icône de notification et sur l’icône de la barre des tâches ;
+- de connecter Gmail et Microsoft en OAuth2 avec PKCE et stockage chiffré des jetons ;
+- de rechercher, télécharger puis installer explicitement les versions publiées sur le dépôt GitHub officiel.
 
-Certains fournisseurs, notamment Gmail et Microsoft, peuvent exiger OAuth2 ou un mot de passe d'application. OAuth2 n'est pas encore intégré.
+Certains fournisseurs, notamment Gmail et Microsoft, peuvent exiger OAuth2 ou un mot de passe d’application. GestionMail prend désormais en charge OAuth2 pour leurs connexions IMAP et SMTP.
+Pour OAuth2, créez une application de type bureau chez Google Cloud ou Microsoft Entra, puis saisissez son identifiant client dans la fiche du compte. Le retour OAuth utilise une adresse locale temporaire `127.0.0.1` et les jetons sont chiffrés par la protection native de Windows.
+
+## Sauvegardes
+
+La page Paramètres permet de créer une sauvegarde dans un nouveau dossier et de la restaurer. La restauration redémarre l’application et conserve automatiquement les données remplacées dans un dossier `avant-restauration-*`.
+
+## Mises à jour
+
+Les mises à jour utilisent les versions publiques du dépôt GitHub `lhutinet/gestionmail`. La recherche peut être automatique, mais le téléchargement et l’installation restent des actions explicites. Seule la version NSIS installée est actualisable ; la version portable doit être remplacée manuellement.
 
 ## Démarrage
 

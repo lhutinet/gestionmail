@@ -10,7 +10,9 @@ function imapOptions(account) {
     host: account.incomingHost,
     port: Number(account.incomingPort),
     secure: Boolean(account.incomingSecure),
-    auth: { user: account.username, pass: account.password },
+    auth: account.authType === 'oauth2'
+      ? { user: account.username, accessToken: account.accessToken }
+      : { user: account.username, pass: account.password },
     logger: false,
     tls: { rejectUnauthorized: true },
     socketTimeout: 30000
@@ -22,7 +24,9 @@ function smtpTransport(account) {
     host: account.outgoingHost,
     port: Number(account.outgoingPort),
     secure: Boolean(account.outgoingSecure),
-    auth: { user: account.username, pass: account.password },
+    auth: account.authType === 'oauth2'
+      ? { type: 'OAuth2', user: account.username, accessToken: account.accessToken }
+      : { user: account.username, pass: account.password },
     connectionTimeout: 15000,
     greetingTimeout: 15000,
     socketTimeout: 30000,
@@ -223,6 +227,8 @@ async function sendMessage(account, message) {
     allowedStyles: {
       '*': {
         color: [/^#[0-9a-f]{3,8}$/i, /^rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)$/i],
+        'background-color': [/^#[0-9a-f]{3,8}$/i, /^rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)$/i],
+        'font-family': [/^[a-z0-9 ,'-]{1,80}$/i],
         'font-size': [/^(?:xx-small|x-small|small|medium|large|x-large|xx-large|\d+(?:\.\d+)?(?:px|pt|em|rem|%))$/i],
         'font-weight': [/^(?:normal|bold|[1-9]00)$/i],
         'font-style': [/^(?:normal|italic|oblique)$/i],

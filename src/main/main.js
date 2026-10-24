@@ -1,25 +1,37 @@
 const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
-const { app, BrowserWindow, dialog, ipcMain, Notification, shell } = require('electron');
+const zlib = require('node:zlib');
+const { performance } = require('node:perf_hooks');
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, shell, Tray } = require('electron');
 const { simpleParser } = require('mailparser');
+const { autoUpdater } = require('electron-updater');
 const { deleteAccount, getAccountWithPassword, listAccounts, saveAccount, validateAccount } = require('./account-store');
 const {
-  changeDataDirectory, copyMessageToLocal, copyStoredFolderToLocal, copyStoredFolderTreeToLocal, createLocalFolder, deleteAccountMessages, deleteContact, deleteContactGroup, deleteLocalFolder, deleteLocalFolderTree, deleteMailRule,
+  changeDataDirectory, checkpointDatabase, copyMessageToLocal, copyStoredFolderToLocal, copyStoredFolderTreeToLocal, countUnreadMessages, createLocalFolder, deleteAccountMessages, deleteContact, deleteContactGroup, deleteLocalFolder, deleteLocalFolderTree, deleteMailRule, duplicateLocalFolderTree,
   getAttachment, getLocalFolderPath, getMessage, getMessageReference, listContactGroups, listContacts, listLocalFolders,
-  deleteDraft, getDraft, isMailRuleApplied, listDrafts, listMailRules, listMessages, listRuleCandidateMessages, listUnindexedEmlFiles, markMailRuleApplied, mergeDuplicateContacts, moveLocalFolder, registerLocalEmlFile, removeLocalMessage, saveContact, saveContactGroup, saveDraft, saveMailRule, searchMessages, setLocalFolderColor, setMessageRead, storeMessage, storeSentMessage
+  deleteDraft, getDraft, isMailRuleApplied, listDrafts, listMailRules, listMessages, listRuleCandidateMessages, listUnindexedEmlFiles, markMailRuleApplied, mergeDuplicateContacts, moveLocalFolder, registerLocalEmlFile, removeLocalMessage, renameLocalFolder, saveContact, saveContactGroup, saveDraft, saveMailRule, searchMessages, setLocalFolderColor, setMessageRead, storeMessage, storeSentMessage
 } = require('./message-store');
 const { getSettings, saveSettings } = require('./settings-store');
 const { deleteTodo, listTodos, saveTodo } = require('./todo-store');
 const { deleteTemplate, getComposerData, saveSignature, saveTemplate } = require('./composer-store');
+const { applyPendingRestore, createBackup, scheduleRestore } = require('./backup-store');
+const { authorizeOAuth } = require('./oauth-service');
 const {
   listFolders, moveRemoteMessage, sendMessage, setRemoteReadState,
   syncAccount, testConfiguration
 } = require('./mail-service');
 const isSmokeTest = process.argv.includes('--smoke-test');
+const startupStartedAt = performance.now();
+const startupMetrics = { processStartedAt: new Date().toISOString(), windowReadyMs: null, localScanMs: null, localScanFiles: 0 };
 let mainWindow = null;
+let tray = null;
+let isQuitting = false;
 const messageWindows = new Map();
 const folderCopyJobs = new Map();
+let localScanPromise = null;
+let updateAvailable = false;
+let updateDownloaded = false;
 
 function csvCell(value) {
   return `"${String(value || '').replaceAll('"', '""')}"`;
@@ -86,6 +98,122 @@ if (isSmokeTest) {
   app.setPath('userData', path.join(os.tmpdir(), `gestionmail-smoke-${process.pid}`));
 }
 
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function updateTrayMenu() {
+  if (!tray || tray.isDestroyed()) return;
+  const visible = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible());
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Afficher GestionMail', enabled: !visible, click: showMainWindow },
+    { label: 'Masquer GestionMail', enabled: visible, click: () => mainWindow?.hide() },
+    { type: 'separator' },
+    { label: 'Rechercher les mises à jour', click: () => checkForUpdates().catch((error) => broadcastUpdate({ state: 'error', message: error.message })) },
+    { type: 'separator' },
+    { label: 'Quitter GestionMail', click: () => { isQuitting = true; app.quit(); } }
+  ]));
+}
+
+function broadcastUpdate(status) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('updates:status', status);
+  }
+}
+
+async function checkForUpdates(automatic = false) {
+  if (!app.isPackaged) return { state: 'development', message: 'La recherche de mise à jour fonctionne dans la version Windows installée.' };
+  autoUpdater.autoDownload = false;
+  broadcastUpdate({ state: 'checking', message: automatic ? 'Recherche automatique d’une mise à jour…' : 'Recherche d’une mise à jour…' });
+  await autoUpdater.checkForUpdates();
+  return { state: 'checking' };
+}
+
+autoUpdater.on('update-available', (info) => { updateAvailable = true; broadcastUpdate({ state: 'available', message: `Version ${info.version} disponible.`, version: info.version }); });
+autoUpdater.on('update-not-available', () => broadcastUpdate({ state: 'current', message: 'GestionMail est à jour.' }));
+autoUpdater.on('download-progress', (progress) => broadcastUpdate({ state: 'downloading', message: `Téléchargement : ${Math.round(progress.percent)} %`, percent: progress.percent }));
+autoUpdater.on('update-downloaded', (info) => { updateDownloaded = true; broadcastUpdate({ state: 'downloaded', message: `Version ${info.version} prête à être installée.`, version: info.version }); });
+autoUpdater.on('error', (error) => broadcastUpdate({ state: 'error', message: `Mise à jour impossible : ${error.message}` }));
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data) {
+  const name = Buffer.from(type);
+  const size = Buffer.alloc(4); size.writeUInt32BE(data.length);
+  const checksum = Buffer.alloc(4); checksum.writeUInt32BE(crc32(Buffer.concat([name, data])));
+  return Buffer.concat([size, name, data, checksum]);
+}
+
+function trayIcon(unread = 0) {
+  const width = 32;
+  const height = 32;
+  const pixels = Buffer.alloc(width * height * 4);
+  const pixel = (x, y, color) => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    const offset = (y * width + x) * 4;
+    pixels.set(color, offset);
+  };
+  for (let y = 4; y < 28; y += 1) for (let x = 1; x < 27; x += 1) pixel(x, y, [20, 36, 60, 255]);
+  for (let step = 0; step < 9; step += 1) {
+    pixel(5 + step, 10 + Math.floor(step * .65), [110, 231, 210, 255]);
+    pixel(21 - step, 10 + Math.floor(step * .65), [110, 231, 210, 255]);
+  }
+  if (unread > 0) {
+    for (let y = 0; y < 17; y += 1) for (let x = 15; x < 32; x += 1) if ((x - 23) ** 2 + (y - 8) ** 2 <= 64) pixel(x, y, [216, 59, 53, 255]);
+    const glyphs = {
+      '0': ['111', '101', '101', '101', '111'], '1': ['010', '110', '010', '010', '111'],
+      '2': ['111', '001', '111', '100', '111'], '3': ['111', '001', '111', '001', '111'],
+      '4': ['101', '101', '111', '001', '001'], '5': ['111', '100', '111', '001', '111'],
+      '6': ['111', '100', '111', '101', '111'], '7': ['111', '001', '010', '010', '010'],
+      '8': ['111', '101', '111', '101', '111'], '9': ['111', '101', '111', '001', '111'],
+      '+': ['000', '010', '111', '010', '000']
+    };
+    const label = unread > 99 ? '9+' : String(unread);
+    const startX = 24 - Math.floor((label.length * 4 - 1) / 2);
+    for (const [characterIndex, character] of [...label].entries()) {
+      for (const [row, pattern] of glyphs[character].entries()) for (const [column, enabled] of [...pattern].entries()) if (enabled === '1') pixel(startX + characterIndex * 4 + column, 6 + row, [255, 255, 255, 255]);
+    }
+  }
+  const raw = Buffer.alloc((width * 4 + 1) * height);
+  for (let y = 0; y < height; y += 1) pixels.copy(raw, y * (width * 4 + 1) + 1, y * width * 4, (y + 1) * width * 4);
+  const header = Buffer.alloc(13); header.writeUInt32BE(width, 0); header.writeUInt32BE(height, 4); header[8] = 8; header[9] = 6;
+  const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), pngChunk('IHDR', header), pngChunk('IDAT', zlib.deflateSync(raw)), pngChunk('IEND', Buffer.alloc(0))]);
+  return nativeImage.createFromBuffer(png);
+}
+
+function updateUnreadBadge() {
+  if (!tray || tray.isDestroyed()) return;
+  try {
+    const unread = countUnreadMessages();
+    const icon = trayIcon(unread);
+    tray.setImage(icon);
+    tray.setToolTip(unread ? `GestionMail — ${unread} message${unread > 1 ? 's' : ''} non lu${unread > 1 ? 's' : ''}` : 'GestionMail — aucun message non lu');
+    if (process.platform === 'win32' && mainWindow && !mainWindow.isDestroyed()) mainWindow.setOverlayIcon(unread ? icon : null, unread ? `${unread} messages non lus` : '');
+  } catch (error) {
+    console.warn(`Compteur non lu indisponible : ${error.message}`);
+  }
+}
+
+async function createTray() {
+  if (isSmokeTest || tray) return;
+  tray = new Tray(trayIcon(0));
+  tray.setToolTip('GestionMail');
+  tray.on('double-click', showMainWindow);
+  tray.on('click', showMainWindow);
+  updateTrayMenu();
+  updateUnreadBadge();
+}
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 1280,
@@ -95,6 +223,7 @@ function createWindow() {
     show: !isSmokeTest,
     backgroundColor: '#f3f5f8',
     title: 'GestionMail',
+    icon: trayIcon(0),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -107,7 +236,24 @@ function createWindow() {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event) => event.preventDefault());
   window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  window.webContents.once('did-finish-load', () => {
+    startupMetrics.windowReadyMs = Math.round(performance.now() - startupStartedAt);
+  });
   mainWindow = window;
+  window.on('minimize', (event) => {
+    if (!getSettings().minimizeToTray || isQuitting) return;
+    event.preventDefault();
+    window.hide();
+    updateTrayMenu();
+  });
+  window.on('close', (event) => {
+    if (!getSettings().minimizeToTray || isQuitting) return;
+    event.preventDefault();
+    window.hide();
+    updateTrayMenu();
+  });
+  window.on('show', updateTrayMenu);
+  window.on('hide', updateTrayMenu);
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = null;
   });
@@ -115,7 +261,8 @@ function createWindow() {
   if (isSmokeTest) {
     window.webContents.once('did-finish-load', async () => {
       try {
-        const colorResult = await window.webContents.executeJavaScript(`(() => {
+        const colorResult = await window.webContents.executeJavaScript(`(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 100));
           const editor = document.querySelector('#compose-body-editor');
           const picker = document.querySelector('#compose-text-color');
           editor.innerHTML = '<p>Texte en couleur</p>';
@@ -141,13 +288,26 @@ function createWindow() {
           const subject = document.querySelector('#compose-form input[name="subject"]');
           subject.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }));
           const contextLabels = [...document.querySelectorAll('.context-menu button')].map((button) => button.textContent);
-          return { inputHtml, changeHtml, contextLabels };
+          const rootStyle = document.documentElement.style;
+          return {
+            inputHtml,
+            changeHtml,
+            contextLabels,
+            interfaceColor: rootStyle.getPropertyValue('--accent-color').trim(),
+            interfaceContrast: rootStyle.getPropertyValue('--accent-contrast').trim(),
+            hasAdvancedSearch: Boolean(document.querySelector('#advanced-search-form input[name="dateFrom"]')),
+            hasEditorBackground: Boolean(document.querySelector('#compose-background-color')),
+            hasBackupActions: Boolean(document.querySelector('#create-backup'))
+          };
         })()`);
         if (
           !/color:\s*(?:#d02020|rgb\(208,\s*32,\s*32\))/i.test(colorResult.inputHtml) ||
           !/color:\s*(?:#2080d0|rgb\(32,\s*128,\s*208\))/i.test(colorResult.changeHtml) ||
           !colorResult.contextLabels.includes('Copier') ||
-          !colorResult.contextLabels.includes('Coller')
+          !colorResult.contextLabels.includes('Coller') ||
+          colorResult.interfaceColor !== '#d04f85' ||
+          !['#102033', '#ffffff'].includes(colorResult.interfaceContrast) ||
+          !colorResult.hasAdvancedSearch || !colorResult.hasEditorBackground || !colorResult.hasBackupActions
         ) {
           throw new Error(`Couleur non appliquée dans l'éditeur : ${JSON.stringify(colorResult)}`);
         }
@@ -182,6 +342,7 @@ function openMessageWindow(messageId) {
     minHeight: 450,
     backgroundColor: '#fafbfc',
     title: message.subject || '(Sans objet)',
+    icon: trayIcon(0),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -202,23 +363,44 @@ function openMessageWindow(messageId) {
 }
 
 async function refreshLocalEmlFiles() {
+  const startedAt = performance.now();
+  let imported = 0;
   for (const file of listUnindexedEmlFiles()) {
     try {
       const raw = fs.readFileSync(file.path);
       const parsed = await simpleParser(raw);
       registerLocalEmlFile(file.localFolderId, file.filename, parsed, raw);
+      imported += 1;
     } catch (error) {
       console.warn(`Fichier EML ignoré (${file.path}) : ${error.message}`);
     }
   }
+  startupMetrics.localScanMs = Math.round(performance.now() - startedAt);
+  startupMetrics.localScanFiles = imported;
+  return { imported, durationMs: startupMetrics.localScanMs };
+}
+
+function scheduleLocalEmlRefresh(sender = null) {
+  if (localScanPromise) return localScanPromise;
+  localScanPromise = new Promise((resolve) => setTimeout(resolve, 150)).then(refreshLocalEmlFiles).then((result) => {
+    if (sender && !sender.isDestroyed()) sender.send('local-folders:refreshed', { folders: listLocalFolders(), ...result });
+    updateUnreadBadge();
+    return result;
+  }).catch((error) => console.warn(`Analyse différée des fichiers EML impossible : ${error.message}`)).finally(() => {
+    localScanPromise = null;
+  });
+  return localScanPromise;
 }
 
 app.whenReady().then(async () => {
+  const restore = applyPendingRestore();
+  if (restore.restored) console.info(`Sauvegarde restaurée. Copie précédente : ${restore.recoveryPath}`);
   if (isSmokeTest) {
     try {
+      if (trayIcon(12).isEmpty()) throw new Error('Échec de la génération de l’icône avec compteur non lu.');
       storeMessage({
         accountId: '__smoke__', remoteId: 'test', folder: 'INBOX',
-        subject: 'Test', text: 'Test',
+        subject: 'Test', from: 'Expéditeur <expediteur@exemple.test>', text: 'Test',
         html: '<p style="text-align:center;color:#123456">Contenu sûr</p><script>alert(1)</script><a href="javascript:alert(1)">Lien</a><img src="cid:logo@test"><img src="https://example.test/pixel.png">',
         attachments: [
           { filename: 'test.txt', content: Buffer.from('ok') },
@@ -287,6 +469,17 @@ app.whenReady().then(async () => {
       ) {
         throw new Error('Échec du contrôle de copie dans un dossier local.');
       }
+      renameLocalFolder(localFolder.id, 'Archives renommées');
+      const renamedFolder = listLocalFolders().find((folder) => folder.id === localFolder.id);
+      if (renamedFolder?.name !== 'Archives renommées' || !fs.existsSync(renamedFolder.path)) throw new Error('Échec du renommage d’un dossier local.');
+      const duplicatedTree = duplicateLocalFolderTree(localFolder.id);
+      if (duplicatedTree.folderCount !== 1 || listMessages('__local__', `local:${duplicatedTree.folder.id}`).length !== 1) throw new Error('Échec de la duplication d’un dossier local.');
+      const advancedResults = searchMessages({ sender: 'exemple.test', hasAttachments: true, readState: 'read' });
+      if (!advancedResults.some((message) => message.id === '__smoke__:test') || !advancedResults.every((message) => message.attachmentCount > 0)) throw new Error('Échec de la recherche avancée.');
+      setMessageRead(localCopy.id, false);
+      if (countUnreadMessages() < 1) throw new Error('Échec du compteur de messages non lus.');
+      setMessageRead(localCopy.id, true);
+      deleteLocalFolderTree(duplicatedTree.folder.id);
       const copiedFolder = copyStoredFolderToLocal('__smoke__', 'INBOX', 'Dossier complet test');
       if (
         copiedFolder.messageCount !== 1 ||
@@ -371,6 +564,20 @@ app.whenReady().then(async () => {
       if (listAccounts().some((account) => account.id === smokeAccount.id)) {
         throw new Error('Échec du contrôle de suppression du compte.');
       }
+      const oauthAccount = await saveAccount({
+        name: 'OAuth test', email: 'oauth@example.test', protocol: 'imap', authType: 'oauth2', oauthProvider: 'google',
+        oauthClientId: 'client-test', oauthTenant: '', accessToken: 'access-test', refreshToken: 'refresh-test', expiresAt: Date.now() + 3600000,
+        incomingHost: 'imap.gmail.com', incomingPort: 993, incomingSecure: true,
+        outgoingHost: 'smtp.gmail.com', outgoingPort: 465, outgoingSecure: true, username: 'oauth@example.test'
+      });
+      const oauthCredentials = await getAccountWithPassword(oauthAccount.id);
+      if (oauthCredentials.accessToken !== 'access-test' || listAccounts().find((account) => account.id === oauthAccount.id)?.accessToken) throw new Error('Échec du stockage chiffré OAuth2.');
+      deleteAccount(oauthAccount.id);
+      storeMessage({ accountId: '__conversation__', remoteId: 'one', folder: 'INBOX', subject: 'Sujet commun', text: 'Premier' });
+      storeMessage({ accountId: '__conversation__', remoteId: 'two', folder: 'INBOX', subject: 'Re: Sujet commun', text: 'Réponse' });
+      const conversationMessages = listMessages('__conversation__', 'INBOX');
+      if (conversationMessages.length !== 2 || conversationMessages[0].conversationKey !== conversationMessages[1].conversationKey) throw new Error('Échec du regroupement par conversation.');
+      deleteAccountMessages('__conversation__');
       storeMessage({
         accountId: '__migration__', remoteId: 'test', folder: 'INBOX',
         subject: 'Migration', text: 'Conserver ce message'
@@ -378,7 +585,7 @@ app.whenReady().then(async () => {
       const migrationFolder = createLocalFolder('Migration locale');
       copyMessageToLocal('__migration__:test', migrationFolder.id);
       const migration = changeDataDirectory(path.join(app.getPath('userData'), 'stockage-test'));
-      saveSettings({ autoSyncMinutes: 5, notificationsEnabled: false, fontSize: 14 });
+      saveSettings({ autoSyncMinutes: 5, notificationsEnabled: false, fontSize: 14, interfaceColor: '#d04f85', minimizeToTray: true, groupConversations: false, autoUpdateEnabled: false });
       const externalEmlPath = path.join(getLocalFolderPath(migrationFolder.id), 'message-externe.eml');
       fs.writeFileSync(
         externalEmlPath,
@@ -393,11 +600,19 @@ app.whenReady().then(async () => {
         listMessages('__local__', `local:${migrationFolder.id}`).length !== 2 ||
         getSettings().autoSyncMinutes !== 5 ||
         getSettings().notificationsEnabled !== false ||
-        getSettings().fontSize !== 14
+        getSettings().fontSize !== 14 ||
+        getSettings().interfaceColor !== '#d04f85' ||
+        getSettings().minimizeToTray !== true ||
+        getSettings().groupConversations !== false ||
+        getSettings().autoUpdateEnabled !== false
       ) {
         throw new Error('Échec du contrôle de migration des paramètres et du stockage.');
       }
       fs.rmSync(externalEmlPath, { force: true });
+      checkpointDatabase();
+      const smokeBackup = createBackup(app.getPath('userData'));
+      if (!fs.existsSync(path.join(smokeBackup.path, 'manifest.json')) || !fs.existsSync(path.join(smokeBackup.path, 'donnees', 'messages.sqlite'))) throw new Error('Échec de la sauvegarde complète.');
+      fs.rmSync(smokeBackup.path, { recursive: true, force: true });
       listLocalFolders();
       if (listMessages('__local__', `local:${migrationFolder.id}`).length !== 1) {
         throw new Error('Échec du contrôle de suppression d’un fichier EML depuis Windows.');
@@ -412,12 +627,21 @@ app.whenReady().then(async () => {
   ipcMain.handle('accounts:list', () => listAccounts());
   ipcMain.handle('accounts:save', (_event, account) => saveAccount(account));
   ipcMain.handle('accounts:test', async (_event, account) => {
-    const testedAccount = account.id && !String(account.password || '').length
-      ? { ...account, password: (await getAccountWithPassword(account.id)).password }
-      : account;
+    const needsStoredCredentials = account.id && (
+      (account.authType !== 'oauth2' && !String(account.password || '').length) ||
+      (account.authType === 'oauth2' && !String(account.accessToken || '').length)
+    );
+    const storedAccount = needsStoredCredentials ? await getAccountWithPassword(account.id) : null;
+    const testedAccount = storedAccount ? {
+      ...storedAccount,
+      ...account,
+      password: account.password || storedAccount.password,
+      accessToken: account.accessToken || storedAccount.accessToken
+    } : account;
     validateAccount(testedAccount);
     return testConfiguration(testedAccount);
   });
+  ipcMain.handle('oauth2:authorize', (_event, values) => authorizeOAuth(values));
   ipcMain.handle('accounts:delete', async (_event, accountId) => {
     const account = await getAccountWithPassword(accountId);
     const removedMessages = deleteAccountMessages(account.id);
@@ -483,13 +707,27 @@ app.whenReady().then(async () => {
   ipcMain.handle('composer:save-signature', (_event, accountId, html) => saveSignature(accountId, html));
   ipcMain.handle('composer:save-template', (_event, template) => saveTemplate(template));
   ipcMain.handle('composer:delete-template', (_event, templateId) => deleteTemplate(templateId));
+  ipcMain.handle('performance:get-startup', () => ({ ...startupMetrics }));
+  ipcMain.handle('updates:check', () => checkForUpdates());
+  ipcMain.handle('updates:download', async () => {
+    if (!updateAvailable) throw new Error('Aucune mise à jour disponible.');
+    await autoUpdater.downloadUpdate();
+    return { downloading: true };
+  });
+  ipcMain.handle('updates:install', () => {
+    if (!updateDownloaded) throw new Error('Aucune mise à jour téléchargée.');
+    isQuitting = true;
+    autoUpdater.quitAndInstall(false, true);
+    return { installing: true };
+  });
   ipcMain.handle('folders:list', async (_event, accountId) => {
     const account = await getAccountWithPassword(accountId);
     return listFolders(account);
   });
-  ipcMain.handle('local-folders:list', async () => {
-    await refreshLocalEmlFiles();
-    return listLocalFolders();
+  ipcMain.handle('local-folders:list', (event) => {
+    const folders = listLocalFolders();
+    scheduleLocalEmlRefresh(event.sender);
+    return folders;
   });
   ipcMain.handle('local-folders:create', (_event, name, parentId) => createLocalFolder(name, parentId));
   ipcMain.handle('local-folders:delete', (_event, localFolderId) => deleteLocalFolder(localFolderId));
@@ -500,6 +738,8 @@ app.whenReady().then(async () => {
     return { cancelled: Boolean(job) };
   });
   ipcMain.handle('local-folders:move', (_event, localFolderId, targetParentId) => moveLocalFolder(localFolderId, targetParentId));
+  ipcMain.handle('local-folders:rename', (_event, localFolderId, name) => renameLocalFolder(localFolderId, name));
+  ipcMain.handle('local-folders:duplicate', (_event, localFolderId) => duplicateLocalFolderTree(localFolderId));
   ipcMain.handle('local-folders:set-color', (_event, localFolderId, color) => setLocalFolderColor(localFolderId, color));
   ipcMain.handle('local-folders:open', async (_event, localFolderId) => {
     const folderPath = getLocalFolderPath(localFolderId);
@@ -592,24 +832,29 @@ app.whenReady().then(async () => {
     }
   });
   ipcMain.handle('messages:list', (_event, accountId, folder) => listMessages(accountId, folder));
-  ipcMain.handle('messages:search', (_event, query) => searchMessages(query));
+  ipcMain.handle('messages:search', (_event, criteria) => searchMessages(criteria));
+  ipcMain.handle('messages:unread-count', () => countUnreadMessages());
   ipcMain.handle('messages:get', (_event, messageId) => getMessage(messageId));
   ipcMain.handle('messages:open-window', (_event, messageId) => openMessageWindow(messageId));
   ipcMain.handle('messages:read-state', async (_event, messageId, isRead) => {
     const reference = getMessageReference(messageId);
     if (reference.accountId === '__local__') {
       setMessageRead(messageId, Boolean(isRead));
+      updateUnreadBadge();
       return { updated: true, localOnly: true };
     }
     const account = await getAccountWithPassword(reference.accountId);
     await setRemoteReadState(account, reference, Boolean(isRead));
     setMessageRead(messageId, Boolean(isRead));
+    updateUnreadBadge();
     return { updated: true };
   });
   ipcMain.handle('messages:delete-local', (_event, messageId) => {
     const reference = getMessageReference(messageId);
     if (reference.accountId !== '__local__') throw new Error('Ce message n’est pas une copie locale.');
-    return removeLocalMessage(messageId);
+    const result = removeLocalMessage(messageId);
+    updateUnreadBadge();
+    return result;
   });
   ipcMain.handle('messages:move', async (_event, messageId, destination) => {
     const reference = getMessageReference(messageId);
@@ -679,6 +924,21 @@ app.whenReady().then(async () => {
     return { executed: true };
   });
   ipcMain.handle('settings:get', () => getSettings());
+  ipcMain.handle('backup:create', async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(owner, { title: 'Choisir où créer la sauvegarde GestionMail', properties: ['openDirectory', 'createDirectory'] });
+    if (result.canceled || !result.filePaths[0]) return { created: false };
+    checkpointDatabase();
+    return createBackup(result.filePaths[0]);
+  });
+  ipcMain.handle('backup:restore', async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(owner, { title: 'Choisir une sauvegarde GestionMail', properties: ['openDirectory'] });
+    if (result.canceled || !result.filePaths[0]) return { scheduled: false };
+    const scheduled = scheduleRestore(result.filePaths[0]);
+    setTimeout(() => { isQuitting = true; app.relaunch(); app.quit(); }, 300);
+    return scheduled;
+  });
   ipcMain.handle('settings:choose-directory', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(owner, {
@@ -698,8 +958,15 @@ app.whenReady().then(async () => {
       autoSyncMinutes: values.autoSyncMinutes,
       notificationsEnabled: values.notificationsEnabled,
       fontSize: values.fontSize,
+      interfaceColor: values.interfaceColor,
+      minimizeToTray: values.minimizeToTray,
+      groupConversations: values.groupConversations,
+      autoUpdateEnabled: values.autoUpdateEnabled,
       dataDirectory: migration.dataDirectory || current.dataDirectory
     });
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('settings:changed', settings);
+    }
     return { settings, migration };
   });
   ipcMain.handle('messages:sync', async (_event, accountId, folder) => {
@@ -729,6 +996,7 @@ app.whenReady().then(async () => {
         break;
       }
     }
+    updateUnreadBadge();
     return { ...result, sorted, messages: listMessages(accountId, folder) };
   });
   ipcMain.handle('messages:send', async (_event, accountId, message) => {
@@ -738,10 +1006,18 @@ app.whenReady().then(async () => {
     return { ...result, localCopy };
   });
   createWindow();
+  await createTray();
+  if (!isSmokeTest && getSettings().autoUpdateEnabled) {
+    setTimeout(() => checkForUpdates(true).catch((error) => broadcastUpdate({ state: 'error', message: error.message })), 5000);
+  }
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    showMainWindow();
   });
+});
+
+app.on('before-quit', () => {
+  isQuitting = true;
 });
 
 app.on('window-all-closed', () => {

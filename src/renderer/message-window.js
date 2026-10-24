@@ -226,10 +226,37 @@ async function loadMessage() {
   }
 }
 
-async function initialiseMessageWindow() {
-  const settings = await window.gestionMail.getSettings();
+function applyInterfaceColor(value) {
+  const color = /^#[0-9a-f]{6}$/i.test(String(value || '')) ? String(value).toLowerCase() : '#6ee7d2';
+  const rgb = [1, 3, 5].map((index) => Number.parseInt(color.slice(index, index + 2), 16));
+  const toHex = (channels) => `#${channels.map((channel) => Math.round(channel).toString(16).padStart(2, '0')).join('')}`;
+  const mix = (target, amount) => toHex(rgb.map((channel, index) => channel + (target[index] - channel) * amount));
+  const linear = rgb.map((channel) => {
+    const normalized = channel / 255;
+    return normalized <= .04045 ? normalized / 12.92 : ((normalized + .055) / 1.055) ** 2.4;
+  });
+  const luminance = .2126 * linear[0] + .7152 * linear[1] + .0722 * linear[2];
+  const root = document.documentElement.style;
+  root.setProperty('--accent-color', color);
+  root.setProperty('--accent-contrast', (luminance + .05) / .064 >= 1.05 / (luminance + .05) ? '#102033' : '#ffffff');
+  root.setProperty('--accent-strong', mix([0, 0, 0], .38));
+  root.setProperty('--accent-mid', mix([255, 255, 255], .38));
+  root.setProperty('--accent-soft', mix([255, 255, 255], .82));
+  root.setProperty('--accent-ring', `${color}38`);
+  root.setProperty('--accent-ink', mix([16, 32, 51], .68));
+}
+
+function applyWindowSettings(settings) {
   const fontSize = [13, 14, 15, 16, 17].includes(Number(settings.fontSize)) ? Number(settings.fontSize) : 15;
   document.documentElement.style.setProperty('--ui-font-size', `${fontSize}px`);
+  applyInterfaceColor(settings.interfaceColor);
+}
+
+window.gestionMail.onSettingsChanged(applyWindowSettings);
+
+async function initialiseMessageWindow() {
+  const settings = await window.gestionMail.getSettings();
+  applyWindowSettings(settings);
   await loadMessage();
 }
 

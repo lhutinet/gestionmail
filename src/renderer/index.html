@@ -57,6 +57,7 @@
               </select>
             </label>
             <button id="sync-button" class="secondary" type="button" disabled>↻ Actualiser</button>
+            <button id="advanced-search-button" class="secondary compact-action" type="button" title="Recherche avancée">Filtres…</button>
             <select id="search-scope" class="search-scope" aria-label="Portée de la recherche"><option value="folder">Ce dossier</option><option value="global">Tous les messages</option></select>
             <label class="search"><span>⌕</span><input id="message-search" type="search" placeholder="Rechercher dans les messages" disabled></label>
           </div>
@@ -98,7 +99,16 @@
           <label>Nom affiché<input name="name" required autocomplete="name" placeholder="Marie Dupont"></label>
           <label>Adresse e-mail<input name="email" type="email" required autocomplete="email" placeholder="marie@exemple.fr"></label>
           <label>Type de réception<select name="protocol"><option value="imap">IMAP — synchronisation</option><option value="pop3">POP3 — téléchargement</option></select></label>
+          <label>Authentification<select name="authType"><option value="password">Mot de passe</option><option value="oauth2">OAuth2 — Gmail ou Microsoft</option></select></label>
           <label>Identifiant<input name="username" required autocomplete="username" placeholder="marie@exemple.fr"></label>
+          <fieldset id="oauth-fields" class="oauth-fields" hidden>
+            <legend>Connexion OAuth2</legend>
+            <label>Fournisseur<select name="oauthProvider"><option value="google">Google / Gmail</option><option value="microsoft">Microsoft / Outlook</option></select></label>
+            <label>Identifiant client<input name="oauthClientId" placeholder="Client ID de l’application de bureau"></label>
+            <label id="oauth-tenant-field" hidden>Tenant Microsoft<input name="oauthTenant" value="common" placeholder="common ou identifiant du tenant"></label>
+            <button id="connect-oauth" class="secondary" type="button">Connecter le compte dans le navigateur…</button>
+            <small id="oauth-status">Créez une application de bureau chez Google ou Microsoft, puis renseignez son identifiant client.</small>
+          </fieldset>
           <fieldset>
             <legend>Serveur entrant</legend>
             <div class="server-row"><label>Adresse<input name="incomingHost" required placeholder="imap.exemple.fr"></label><label class="port">Port<input name="incomingPort" type="number" min="1" max="65535" value="993" required></label></div>
@@ -109,7 +119,7 @@
             <div class="server-row"><label>Adresse<input name="outgoingHost" required placeholder="smtp.exemple.fr"></label><label class="port">Port<input name="outgoingPort" type="number" min="1" max="65535" value="465" required></label></div>
             <label class="checkbox"><input name="outgoingSecure" type="checkbox" checked> TLS direct — port 465 ; décocher pour STARTTLS sur le port 587</label>
           </fieldset>
-          <label class="full">Mot de passe<input name="password" type="password" required autocomplete="current-password"><small id="password-help">Il sera chiffré avec la protection de votre session Windows.</small></label>
+          <label id="password-field" class="full">Mot de passe<input name="password" type="password" required autocomplete="current-password"><small id="password-help">Il sera chiffré avec la protection de votre session Windows.</small></label>
         </div>
         <p id="form-error" class="form-error" role="alert"></p>
         <div class="dialog-actions split-actions"><button id="delete-account" class="danger" type="button" hidden>Supprimer ce compte</button><span></span><button id="cancel-dialog" type="button">Annuler</button><button id="save-account" class="primary" type="submit">Tester et enregistrer</button></div>
@@ -172,7 +182,9 @@
                   <option value="4">Grand</option>
                   <option value="5">Très grand</option>
                 </select>
+                <select id="compose-font-family" aria-label="Police" title="Police"><option value="">Police</option><option value="Arial">Arial</option><option value="Georgia">Georgia</option><option value="Tahoma">Tahoma</option><option value="Verdana">Verdana</option><option value="'Courier New'">Courier New</option></select>
                 <label class="compose-color" title="Couleur du texte"><span>Couleur</span><input id="compose-text-color" type="color" value="#263243" aria-label="Couleur du texte"></label>
+                <label class="compose-color" title="Surlignage"><span>Fond</span><input id="compose-background-color" type="color" value="#fff2a8" aria-label="Couleur de surlignage"></label>
                 <span class="toolbar-separator"></span>
                 <input id="compose-link-url" class="compose-link-url" type="url" placeholder="https://…" aria-label="Adresse du lien">
                 <button id="compose-add-link" type="button" title="Ajouter un lien">Lien</button>
@@ -293,6 +305,18 @@
         <p id="todo-error" class="form-error" role="alert"></p>
       </div>
     </dialog>
+    <dialog id="advanced-search-dialog" class="small-dialog">
+      <form id="advanced-search-form" method="dialog">
+        <div class="dialog-heading"><div><h2>Recherche avancée</h2><p>Combinez plusieurs critères dans tous les messages locaux.</p></div><button id="close-advanced-search" class="icon-button" type="button" aria-label="Fermer">×</button></div>
+        <label>Texte<input name="query" placeholder="Objet, destinataire ou contenu"></label>
+        <label>Expéditeur<input name="sender" placeholder="nom ou adresse e-mail"></label>
+        <div class="date-search-row"><label>Du<input name="dateFrom" type="date"></label><label>Au<input name="dateTo" type="date"></label></div>
+        <label>État<select name="readState"><option value="">Tous</option><option value="unread">Non lus</option><option value="read">Lus</option></select></label>
+        <label>Pièces jointes<select name="hasAttachments"><option value="">Indifférent</option><option value="yes">Avec pièces jointes</option><option value="no">Sans pièce jointe</option></select></label>
+        <p id="advanced-search-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions"><button id="reset-advanced-search" type="button">Effacer</button><button id="cancel-advanced-search" type="button">Annuler</button><button class="primary" type="submit">Rechercher</button></div>
+      </form>
+    </dialog>
     <dialog id="drafts-dialog" class="small-dialog drafts-dialog">
       <div class="drafts-panel">
         <div class="dialog-heading">
@@ -373,7 +397,15 @@
               <option value="17">Grande</option>
             </select>
           </label>
+          <label>Couleur principale de l’interface
+            <span class="interface-color-control">
+              <input name="interfaceColor" type="color" value="#6ee7d2" aria-label="Couleur principale">
+              <span>La couleur est prévisualisée immédiatement.</span>
+            </span>
+          </label>
           <label class="checkbox"><input name="notificationsEnabled" type="checkbox"> Afficher les notifications Windows</label>
+          <label class="checkbox"><input name="minimizeToTray" type="checkbox"> Réduire dans la zone de notification Windows</label>
+          <label class="checkbox"><input name="groupConversations" type="checkbox"> Regrouper les messages par conversation</label>
           <fieldset>
             <legend>Emplacement des dossiers locaux</legend>
             <div class="storage-row">
@@ -387,6 +419,18 @@
             <button id="open-rules" class="secondary" type="button">Gérer le tri automatique…</button>
             <small>Les règles sont appliquées après chaque relève des nouveaux messages.</small>
           </fieldset>
+          <fieldset>
+            <legend>Sauvegarde et restauration</legend>
+            <div class="backup-actions"><button id="create-backup" class="secondary" type="button">Créer une sauvegarde complète…</button><button id="restore-backup" class="secondary" type="button">Restaurer une sauvegarde…</button></div>
+            <small>Comptes, paramètres, contacts, règles, messages et arborescence locale sont inclus. Une restauration redémarre GestionMail et conserve une copie de sécurité des données remplacées.</small>
+          </fieldset>
+          <fieldset>
+            <legend>Mises à jour</legend>
+            <label class="checkbox"><input name="autoUpdateEnabled" type="checkbox"> Rechercher automatiquement les mises à jour</label>
+            <div class="backup-actions"><button id="check-updates" class="secondary" type="button">Rechercher maintenant</button><button id="download-update" class="secondary" type="button" hidden>Télécharger</button><button id="install-update" class="secondary" type="button" hidden>Installer et redémarrer</button></div>
+            <small id="update-status">Source officielle : versions publiées du dépôt GitHub lhutinet/gestionmail.</small>
+          </fieldset>
+          <small id="startup-performance" class="startup-performance">Mesure du démarrage indisponible.</small>
         </div>
         <p id="settings-error" class="form-error" role="alert"></p>
         <div class="dialog-actions"><button id="cancel-settings" type="button">Annuler</button><button id="save-settings" class="primary" type="submit">Enregistrer</button></div>
