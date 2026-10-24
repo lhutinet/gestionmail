@@ -5,11 +5,13 @@ const { app, BrowserWindow, dialog, ipcMain, Notification, shell } = require('el
 const { simpleParser } = require('mailparser');
 const { deleteAccount, getAccountWithPassword, listAccounts, saveAccount, validateAccount } = require('./account-store');
 const {
-  changeDataDirectory, copyMessageToLocal, copyStoredFolderToLocal, copyStoredFolderTreeToLocal, createLocalFolder, deleteAccountMessages, deleteContact, deleteContactGroup, deleteLocalFolder,
+  changeDataDirectory, copyMessageToLocal, copyStoredFolderToLocal, copyStoredFolderTreeToLocal, createLocalFolder, deleteAccountMessages, deleteContact, deleteContactGroup, deleteLocalFolder, deleteLocalFolderTree, deleteMailRule,
   getAttachment, getLocalFolderPath, getMessage, getMessageReference, listContactGroups, listContacts, listLocalFolders,
-  listMessages, listUnindexedEmlFiles, moveLocalFolder, registerLocalEmlFile, removeLocalMessage, saveContact, saveContactGroup, setMessageRead, storeMessage
+  deleteDraft, getDraft, isMailRuleApplied, listDrafts, listMailRules, listMessages, listRuleCandidateMessages, listUnindexedEmlFiles, markMailRuleApplied, mergeDuplicateContacts, moveLocalFolder, registerLocalEmlFile, removeLocalMessage, saveContact, saveContactGroup, saveDraft, saveMailRule, searchMessages, setLocalFolderColor, setMessageRead, storeMessage, storeSentMessage
 } = require('./message-store');
 const { getSettings, saveSettings } = require('./settings-store');
+const { deleteTodo, listTodos, saveTodo } = require('./todo-store');
+const { deleteTemplate, getComposerData, saveSignature, saveTemplate } = require('./composer-store');
 const {
   listFolders, moveRemoteMessage, sendMessage, setRemoteReadState,
   syncAccount, testConfiguration
@@ -17,6 +19,68 @@ const {
 const isSmokeTest = process.argv.includes('--smoke-test');
 let mainWindow = null;
 const messageWindows = new Map();
+const folderCopyJobs = new Map();
+
+function csvCell(value) {
+  return `"${String(value || '').replaceAll('"', '""')}"`;
+}
+
+function contactsToCsv(contacts) {
+  const rows = [['Nom', 'E-mail', 'Téléphone', 'Société', 'Notes']];
+  for (const contact of contacts) rows.push([contact.name, contact.email, contact.phone, contact.company, contact.notes]);
+  return `\uFEFF${rows.map((row) => row.map(csvCell).join(';')).join('\r\n')}\r\n`;
+}
+
+function contactsToVcard(contacts) {
+  const clean = (value) => String(value || '').replaceAll('\\', '\\\\').replaceAll('\n', '\\n').replaceAll(';', '\\;').replaceAll(',', '\\,');
+  return contacts.map((contact) => [
+    'BEGIN:VCARD', 'VERSION:3.0', `FN:${clean(contact.name)}`, `EMAIL:${clean(contact.email)}`,
+    contact.phone ? `TEL:${clean(contact.phone)}` : '', contact.company ? `ORG:${clean(contact.company)}` : '',
+    contact.notes ? `NOTE:${clean(contact.notes)}` : '', 'END:VCARD'
+  ].filter(Boolean).join('\r\n')).join('\r\n');
+}
+
+function parseCsvLine(line, separator) {
+  const values = [];
+  let value = '';
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (character === '"' && quoted && line[index + 1] === '"') { value += '"'; index += 1; }
+    else if (character === '"') quoted = !quoted;
+    else if (character === separator && !quoted) { values.push(value.trim()); value = ''; }
+    else value += character;
+  }
+  values.push(value.trim());
+  return values;
+}
+
+function parseContactFile(filePath) {
+  const content = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
+  if (/\.vcf$/i.test(filePath) || /BEGIN:VCARD/i.test(content)) {
+    return [...content.matchAll(/BEGIN:VCARD([\s\S]*?)END:VCARD/gi)].map((match) => {
+      const fields = {};
+      for (const line of match[1].replace(/\r?\n[ \t]/g, '').split(/\r?\n/)) {
+        const separator = line.indexOf(':');
+        if (separator < 0) continue;
+        const key = line.slice(0, separator).split(';')[0].toUpperCase();
+        fields[key] = line.slice(separator + 1).replace(/\\n/gi, '\n').replace(/\\([\\;,])/g, '$1');
+      }
+      return { name: fields.FN || fields.N || fields.EMAIL, email: fields.EMAIL, phone: fields.TEL || '', company: fields.ORG || '', notes: fields.NOTE || '' };
+    }).filter((contact) => contact.email);
+  }
+  const lines = content.split(/\r?\n/).filter((line) => line.trim());
+  if (!lines.length) return [];
+  const separator = (lines[0].match(/;/g) || []).length >= (lines[0].match(/,/g) || []).length ? ';' : ',';
+  const headers = parseCsvLine(lines.shift(), separator).map((value) => value.toLocaleLowerCase('fr'));
+  const column = (...names) => headers.findIndex((header) => names.some((name) => header.includes(name)));
+  const indices = { name: column('nom', 'name'), email: column('mail'), phone: column('téléphone', 'telephone', 'phone'), company: column('société', 'societe', 'company', 'entreprise'), notes: column('note') };
+  return lines.map((line) => {
+    const cells = parseCsvLine(line, separator);
+    const get = (index) => index >= 0 ? cells[index] || '' : '';
+    return { name: get(indices.name) || get(indices.email), email: get(indices.email), phone: get(indices.phone), company: get(indices.company), notes: get(indices.notes) };
+  }).filter((contact) => contact.email);
+}
 
 if (isSmokeTest) {
   app.setPath('userData', path.join(os.tmpdir(), `gestionmail-smoke-${process.pid}`));
@@ -49,7 +113,50 @@ function createWindow() {
   });
 
   if (isSmokeTest) {
-    window.webContents.once('did-finish-load', () => app.quit());
+    window.webContents.once('did-finish-load', async () => {
+      try {
+        const colorResult = await window.webContents.executeJavaScript(`(() => {
+          const editor = document.querySelector('#compose-body-editor');
+          const picker = document.querySelector('#compose-text-color');
+          editor.innerHTML = '<p>Texte en couleur</p>';
+          const range = document.createRange();
+          range.selectNodeContents(editor.querySelector('p'));
+          const selection = window.getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          editor.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+          picker.value = '#d02020';
+          picker.dispatchEvent(new Event('input', { bubbles: true }));
+          const inputHtml = editor.innerHTML;
+          editor.innerHTML = '<p>Autre texte en couleur</p>';
+          const changeRange = document.createRange();
+          changeRange.selectNodeContents(editor.querySelector('p'));
+          selection.removeAllRanges();
+          selection.addRange(changeRange);
+          editor.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+          picker.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+          picker.value = '#2080d0';
+          picker.dispatchEvent(new Event('change', { bubbles: true }));
+          const changeHtml = editor.innerHTML;
+          const subject = document.querySelector('#compose-form input[name="subject"]');
+          subject.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }));
+          const contextLabels = [...document.querySelectorAll('.context-menu button')].map((button) => button.textContent);
+          return { inputHtml, changeHtml, contextLabels };
+        })()`);
+        if (
+          !/color:\s*(?:#d02020|rgb\(208,\s*32,\s*32\))/i.test(colorResult.inputHtml) ||
+          !/color:\s*(?:#2080d0|rgb\(32,\s*128,\s*208\))/i.test(colorResult.changeHtml) ||
+          !colorResult.contextLabels.includes('Copier') ||
+          !colorResult.contextLabels.includes('Coller')
+        ) {
+          throw new Error(`Couleur non appliquée dans l'éditeur : ${JSON.stringify(colorResult)}`);
+        }
+      } catch (error) {
+        console.error(error);
+        process.exitCode = 1;
+      }
+      app.quit();
+    });
     window.webContents.once('did-fail-load', (_event, code, description) => {
       console.error(`Chargement impossible (${code}) : ${description}`);
       process.exitCode = 1;
@@ -149,14 +256,31 @@ app.whenReady().then(async () => {
       if (smokeGroup.members.length !== 2 || listContactGroups().length !== 1) {
         throw new Error('Échec du contrôle des groupes de contacts.');
       }
-      deleteContactGroup(smokeGroup.id);
+      const editedGroup = saveContactGroup('Groupe modifié', [smokeContact.id, secondContact.id], smokeGroup.id);
+      const duplicateContact = saveContact({ name: 'Doublon test', email: 'CONTACT@example.test', notes: 'Note doublon' });
+      const mergeResult = mergeDuplicateContacts();
+      if (editedGroup.name !== 'Groupe modifié' || mergeResult.merged !== 1 || listContacts().length !== 2) {
+        throw new Error('Échec du contrôle de modification des groupes ou de fusion des doublons.');
+      }
+      if (listContacts().some((contact) => contact.id === duplicateContact.id)) {
+        throw new Error('Échec du contrôle de suppression du doublon fusionné.');
+      }
+      deleteContactGroup(editedGroup.id);
       deleteContact(smokeContact.id);
       deleteContact(secondContact.id);
       if (listContacts().length) throw new Error('Échec du contrôle de suppression du contact.');
+      saveSignature('__smoke__', '<strong>Signature test</strong>');
+      const template = saveTemplate({ name: 'Modèle test', subject: 'Objet', htmlBody: '<p>Corps</p>' });
+      if (getComposerData('__smoke__').signature !== '<strong>Signature test</strong>' || getComposerData('__smoke__').templates.length !== 1) {
+        throw new Error('Échec du contrôle des signatures et modèles.');
+      }
+      deleteTemplate(template.id);
       const localFolder = createLocalFolder('Archives test');
+      setLocalFolderColor(localFolder.id, 'purple');
       const localCopy = copyMessageToLocal('__smoke__:test', localFolder.id);
       if (
         listMessages('__local__', `local:${localFolder.id}`).length !== 1 ||
+        listLocalFolders().find((folder) => folder.id === localFolder.id)?.color !== 'purple' ||
         getMessage(localCopy.id).attachments.length !== 2 ||
         !fs.existsSync(localCopy.path) ||
         path.extname(localCopy.path).toLocaleLowerCase('en') !== '.eml'
@@ -172,10 +296,14 @@ app.whenReady().then(async () => {
         throw new Error('Échec du contrôle de copie complète d’un dossier.');
       }
       storeMessage({
-        accountId: '__smoke__', remoteId: 'child-test', folder: 'INBOX/Sous-dossier',
+        accountId: '__smoke_tree__', remoteId: 'root-test', folder: 'INBOX',
+        subject: 'Message racine', text: 'Conserver dans la racine'
+      });
+      storeMessage({
+        accountId: '__smoke_tree__', remoteId: 'child-test', folder: 'INBOX/Sous-dossier',
         subject: 'Message enfant', text: 'Conserver dans le sous-dossier'
       });
-      const copiedTree = copyStoredFolderTreeToLocal('__smoke__', [
+      const copiedTree = copyStoredFolderTreeToLocal('__smoke_tree__', [
         { sourcePath: 'INBOX', parentSourcePath: null, name: 'Arbre complet test' },
         { sourcePath: 'INBOX/Sous-dossier', parentSourcePath: 'INBOX', name: 'Sous-dossier' },
         { sourcePath: 'INBOX/Sous-dossier/Vide', parentSourcePath: 'INBOX/Sous-dossier', name: 'Vide' }
@@ -212,7 +340,8 @@ app.whenReady().then(async () => {
       deleteLocalFolder(copiedTreeChild.id);
       deleteLocalFolder(copiedTree.folder.id);
       removeLocalMessage('__smoke__:test');
-      removeLocalMessage('__smoke__:child-test');
+      removeLocalMessage('__smoke_tree__:root-test');
+      removeLocalMessage('__smoke_tree__:child-test');
       if (listMessages('__smoke__', 'INBOX').length) {
         throw new Error('Échec du contrôle de suppression locale du message.');
       }
@@ -249,7 +378,7 @@ app.whenReady().then(async () => {
       const migrationFolder = createLocalFolder('Migration locale');
       copyMessageToLocal('__migration__:test', migrationFolder.id);
       const migration = changeDataDirectory(path.join(app.getPath('userData'), 'stockage-test'));
-      saveSettings({ autoSyncMinutes: 5, notificationsEnabled: false });
+      saveSettings({ autoSyncMinutes: 5, notificationsEnabled: false, fontSize: 14 });
       const externalEmlPath = path.join(getLocalFolderPath(migrationFolder.id), 'message-externe.eml');
       fs.writeFileSync(
         externalEmlPath,
@@ -263,7 +392,8 @@ app.whenReady().then(async () => {
         !fs.existsSync(path.join(getSettings().dataDirectory, 'Dossiers locaux', migrationFolder.diskName)) ||
         listMessages('__local__', `local:${migrationFolder.id}`).length !== 2 ||
         getSettings().autoSyncMinutes !== 5 ||
-        getSettings().notificationsEnabled !== false
+        getSettings().notificationsEnabled !== false ||
+        getSettings().fontSize !== 14
       ) {
         throw new Error('Échec du contrôle de migration des paramètres et du stockage.');
       }
@@ -298,8 +428,61 @@ app.whenReady().then(async () => {
   ipcMain.handle('contacts:save', (_event, contact) => saveContact(contact));
   ipcMain.handle('contacts:delete', (_event, contactId) => deleteContact(contactId));
   ipcMain.handle('contact-groups:list', () => listContactGroups());
-  ipcMain.handle('contact-groups:save', (_event, name, contactIds) => saveContactGroup(name, contactIds));
+  ipcMain.handle('contact-groups:save', (_event, name, contactIds, groupId) => saveContactGroup(name, contactIds, groupId));
   ipcMain.handle('contact-groups:delete', (_event, groupId) => deleteContactGroup(groupId));
+  ipcMain.handle('contacts:merge-duplicates', () => mergeDuplicateContacts());
+  ipcMain.handle('contacts:export', async (event, format = 'csv') => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const useVcard = format === 'vcf';
+    const result = await dialog.showSaveDialog(owner, {
+      title: 'Exporter les contacts',
+      defaultPath: `contacts-gestionmail.${useVcard ? 'vcf' : 'csv'}`,
+      filters: [{ name: useVcard ? 'vCard' : 'CSV', extensions: [useVcard ? 'vcf' : 'csv'] }]
+    });
+    if (result.canceled || !result.filePath) return { exported: false };
+    const contacts = listContacts();
+    fs.writeFileSync(result.filePath, useVcard ? contactsToVcard(contacts) : contactsToCsv(contacts), 'utf8');
+    return { exported: true, count: contacts.length, path: result.filePath };
+  });
+  ipcMain.handle('contacts:import', async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(owner, {
+      title: 'Importer des contacts', properties: ['openFile'],
+      filters: [{ name: 'Contacts CSV ou vCard', extensions: ['csv', 'vcf'] }]
+    });
+    if (result.canceled || !result.filePaths[0]) return { imported: false, count: 0 };
+    const imported = parseContactFile(result.filePaths[0]);
+    const existing = new Map(listContacts().map((contact) => [contact.email.toLocaleLowerCase('fr'), contact]));
+    let count = 0;
+    for (const contact of imported) {
+      const previous = existing.get(contact.email.toLocaleLowerCase('fr'));
+      const saved = saveContact({
+        ...previous, ...contact,
+        id: previous?.id || '',
+        name: contact.name || previous?.name || contact.email,
+        phone: contact.phone || previous?.phone || '',
+        company: contact.company || previous?.company || '',
+        notes: contact.notes || previous?.notes || ''
+      });
+      existing.set(saved.email.toLocaleLowerCase('fr'), saved);
+      count += 1;
+    }
+    return { imported: true, count };
+  });
+  ipcMain.handle('todos:list', () => listTodos());
+  ipcMain.handle('todos:save', (_event, todo) => saveTodo(todo));
+  ipcMain.handle('todos:delete', (_event, todoId) => deleteTodo(todoId));
+  ipcMain.handle('mail-rules:list', () => listMailRules());
+  ipcMain.handle('mail-rules:save', (_event, rule) => saveMailRule(rule));
+  ipcMain.handle('mail-rules:delete', (_event, ruleId) => deleteMailRule(ruleId));
+  ipcMain.handle('drafts:list', () => listDrafts());
+  ipcMain.handle('drafts:get', (_event, draftId) => getDraft(draftId));
+  ipcMain.handle('drafts:save', (_event, draft) => saveDraft(draft));
+  ipcMain.handle('drafts:delete', (_event, draftId) => deleteDraft(draftId));
+  ipcMain.handle('composer:get-data', (_event, accountId) => getComposerData(accountId));
+  ipcMain.handle('composer:save-signature', (_event, accountId, html) => saveSignature(accountId, html));
+  ipcMain.handle('composer:save-template', (_event, template) => saveTemplate(template));
+  ipcMain.handle('composer:delete-template', (_event, templateId) => deleteTemplate(templateId));
   ipcMain.handle('folders:list', async (_event, accountId) => {
     const account = await getAccountWithPassword(accountId);
     return listFolders(account);
@@ -310,7 +493,14 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('local-folders:create', (_event, name, parentId) => createLocalFolder(name, parentId));
   ipcMain.handle('local-folders:delete', (_event, localFolderId) => deleteLocalFolder(localFolderId));
+  ipcMain.handle('local-folders:delete-tree', (_event, localFolderId) => deleteLocalFolderTree(localFolderId));
+  ipcMain.handle('local-folders:cancel-copy', (event) => {
+    const job = folderCopyJobs.get(event.sender.id);
+    if (job) job.cancelled = true;
+    return { cancelled: Boolean(job) };
+  });
   ipcMain.handle('local-folders:move', (_event, localFolderId, targetParentId) => moveLocalFolder(localFolderId, targetParentId));
+  ipcMain.handle('local-folders:set-color', (_event, localFolderId, color) => setLocalFolderColor(localFolderId, color));
   ipcMain.handle('local-folders:open', async (_event, localFolderId) => {
     const folderPath = getLocalFolderPath(localFolderId);
     const error = await shell.openPath(folderPath);
@@ -321,6 +511,8 @@ app.whenReady().then(async () => {
     return copyMessageToLocal(messageId, localFolderId);
   });
   ipcMain.handle('local-folders:copy-remote-folder', async (event, accountId, folderPath, folderName) => {
+    const job = { cancelled: false };
+    folderCopyJobs.set(event.sender.id, job);
     const ownerWindow = BrowserWindow.fromWebContents(event.sender);
     const reportProgress = (progress, taskbarValue = null) => {
       if (!event.sender.isDestroyed()) event.sender.send('local-folders:copy-progress', progress);
@@ -329,6 +521,7 @@ app.whenReady().then(async () => {
     reportProgress({ label: String(folderName || folderPath), detail: 'Lecture de l’arborescence du serveur…' }, 2);
     try {
       const account = await getAccountWithPassword(accountId);
+      if (job.cancelled) throw new Error('Copie annulée.');
       const sourcePath = String(folderPath);
       const remoteFolders = await listFolders(account);
       const sourceFolder = remoteFolders.find((folder) => folder.path === sourcePath);
@@ -368,6 +561,7 @@ app.whenReady().then(async () => {
       const foldersToSync = descendants.filter((folder) => folder.selectable !== false);
       let serverTotal = 0;
       for (const [index, remoteFolder] of foldersToSync.entries()) {
+        if (job.cancelled) throw new Error('Copie annulée.');
         reportProgress({
           label: String(folderName || sourceFolder?.name || sourcePath),
           detail: `Téléchargement de « ${remoteFolder.name || remoteFolder.path} » — ${serverTotal} message${serverTotal > 1 ? 's' : ''}`,
@@ -377,6 +571,7 @@ app.whenReady().then(async () => {
         const syncResult = await syncAccount(account, remoteFolder.path, true);
         serverTotal += Number(syncResult.total || 0);
       }
+      if (job.cancelled) throw new Error('Copie annulée.');
       reportProgress({
         label: String(folderName || sourceFolder?.name || sourcePath),
         detail: `Création de ${descriptorByPath.size} dossier${descriptorByPath.size > 1 ? 's' : ''} dans le stockage local…`,
@@ -392,10 +587,12 @@ app.whenReady().then(async () => {
       }, 1);
       return { ...result, serverTotal };
     } finally {
+      folderCopyJobs.delete(event.sender.id);
       if (ownerWindow && !ownerWindow.isDestroyed()) ownerWindow.setProgressBar(-1);
     }
   });
   ipcMain.handle('messages:list', (_event, accountId, folder) => listMessages(accountId, folder));
+  ipcMain.handle('messages:search', (_event, query) => searchMessages(query));
   ipcMain.handle('messages:get', (_event, messageId) => getMessage(messageId));
   ipcMain.handle('messages:open-window', (_event, messageId) => openMessageWindow(messageId));
   ipcMain.handle('messages:read-state', async (_event, messageId, isRead) => {
@@ -433,6 +630,21 @@ app.whenReady().then(async () => {
       return { path: filePath, name: path.basename(filePath), size: stats.size };
     });
   });
+  ipcMain.handle('composer:choose-inline-image', async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(owner, {
+      title: 'Insérer une image', properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }]
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const filePath = result.filePaths[0];
+    const stats = fs.statSync(filePath);
+    if (stats.size > 5 * 1024 * 1024) throw new Error('L’image dépasse la limite de 5 Mo.');
+    const extension = path.extname(filePath).slice(1).toLowerCase();
+    const mime = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' }[extension];
+    if (!mime) throw new Error('Format d’image non pris en charge.');
+    return { name: path.basename(filePath), dataUrl: `data:${mime};base64,${fs.readFileSync(filePath).toString('base64')}` };
+  });
   ipcMain.handle('attachments:save', async (event, messageId, attachmentIndex) => {
     const attachment = getAttachment(messageId, attachmentIndex);
     const owner = BrowserWindow.fromWebContents(event.sender);
@@ -460,6 +672,12 @@ app.whenReady().then(async () => {
     notification.show();
     return { shown: true };
   });
+  ipcMain.handle('editor:command', (event, command) => {
+    const allowed = new Set(['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll']);
+    if (!allowed.has(command) || typeof event.sender[command] !== 'function') throw new Error('Commande d’édition inconnue.');
+    event.sender[command]();
+    return { executed: true };
+  });
   ipcMain.handle('settings:get', () => getSettings());
   ipcMain.handle('settings:choose-directory', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
@@ -479,6 +697,7 @@ app.whenReady().then(async () => {
     const settings = saveSettings({
       autoSyncMinutes: values.autoSyncMinutes,
       notificationsEnabled: values.notificationsEnabled,
+      fontSize: values.fontSize,
       dataDirectory: migration.dataDirectory || current.dataDirectory
     });
     return { settings, migration };
@@ -486,11 +705,37 @@ app.whenReady().then(async () => {
   ipcMain.handle('messages:sync', async (_event, accountId, folder) => {
     const account = await getAccountWithPassword(accountId);
     const result = await syncAccount(account, folder);
-    return { ...result, messages: listMessages(accountId, folder) };
+    const rules = listMailRules().filter((rule) => rule.enabled && rule.accountId === account.id);
+    let sorted = 0;
+    for (const message of listRuleCandidateMessages(account.id, folder)) {
+      for (const rule of rules) {
+        if (isMailRuleApplied(rule.id, message.id)) continue;
+        const actual = String(message[rule.matchField] || '').toLocaleLowerCase('fr');
+        const expected = rule.matchValue.toLocaleLowerCase('fr');
+        const matches = rule.matchType === 'equals' ? actual === expected
+          : rule.matchType === 'startsWith' ? actual.startsWith(expected)
+            : rule.matchType === 'endsWith' ? actual.endsWith(expected)
+              : actual.includes(expected);
+        if (!matches) continue;
+        if (rule.targetType === 'local') {
+          copyMessageToLocal(message.id, Number(rule.targetValue));
+        } else {
+          if (account.protocol !== 'imap') continue;
+          await moveRemoteMessage(account, message, rule.targetValue);
+          removeLocalMessage(message.id);
+        }
+        markMailRuleApplied(rule.id, message.id);
+        sorted += 1;
+        break;
+      }
+    }
+    return { ...result, sorted, messages: listMessages(accountId, folder) };
   });
   ipcMain.handle('messages:send', async (_event, accountId, message) => {
     const account = await getAccountWithPassword(accountId);
-    return sendMessage(account, message);
+    const result = await sendMessage(account, message);
+    const localCopy = storeSentMessage(account, message);
+    return { ...result, localCopy };
   });
   createWindow();
 

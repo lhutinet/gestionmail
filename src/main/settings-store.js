@@ -10,6 +10,7 @@ function defaults() {
   return {
     autoSyncMinutes: 0,
     notificationsEnabled: true,
+    fontSize: 15,
     dataDirectory: app.getPath('userData')
   };
 }
@@ -25,6 +26,7 @@ function getSettings() {
 
 function saveSettings(patch) {
   const allowedIntervals = [0, 1, 5, 15, 30];
+  const allowedFontSizes = [13, 14, 15, 16, 17];
   const current = getSettings();
   const next = {
     ...current,
@@ -34,6 +36,9 @@ function saveSettings(patch) {
     notificationsEnabled: patch.notificationsEnabled === undefined
       ? current.notificationsEnabled
       : Boolean(patch.notificationsEnabled),
+    fontSize: allowedFontSizes.includes(Number(patch.fontSize))
+      ? Number(patch.fontSize)
+      : current.fontSize,
     dataDirectory: patch.dataDirectory ? path.resolve(String(patch.dataDirectory)) : current.dataDirectory
   };
   fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });

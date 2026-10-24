@@ -38,6 +38,17 @@ La version actuelle permet également :
 - d'ouvrir les paramètres depuis la roue dentée en bas à gauche ;
 - de gérer l'ajout, la modification et la suppression des comptes dans Paramètres, avec un sélecteur compact dans la navigation ;
 - de choisir l'emplacement de la base locale sans supprimer automatiquement l'ancienne copie de sécurité.
+- de copier récursivement un dossier serveur et toute son arborescence vers les dossiers locaux, avec progression et annulation ;
+- de déplacer les dossiers locaux comme des dossiers Windows, de compter leur contenu récursivement et de supprimer une arborescence complète ;
+- d'effectuer une recherche globale, de sélectionner plusieurs messages et de leur appliquer une action groupée ;
+- d'enregistrer automatiquement les brouillons et de conserver une copie locale des messages envoyés ;
+- de classer automatiquement les nouveaux messages avec des règles par expéditeur, destinataire, objet ou contenu ;
+- de gérer des contacts et des groupes, avec import/export CSV ou vCard et fusion des doublons ;
+- de rédiger en HTML avec modèles, signature par compte, images intégrées et vérification orthographique ;
+- de conserver une liste TODO locale depuis le bouton discret en bas à gauche ;
+- de rouvrir automatiquement le dernier compte et le dernier dossier consultés ;
+- de redimensionner les colonnes principales.
+- de choisir la taille générale du texte depuis les paramètres.
 
 Certains fournisseurs, notamment Gmail et Microsoft, peuvent exiger OAuth2 ou un mot de passe d'application. OAuth2 n'est pas encore intégré.
 

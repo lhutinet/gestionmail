@@ -197,6 +197,37 @@ function db() {
       contact_id TEXT NOT NULL,
       PRIMARY KEY(group_id, contact_id)
     );
+    CREATE TABLE IF NOT EXISTS mail_rules (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      match_field TEXT NOT NULL,
+      match_type TEXT NOT NULL,
+      match_value TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_value TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS mail_rule_applications (
+      rule_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      applied_at TEXT NOT NULL,
+      PRIMARY KEY(rule_id, message_id)
+    );
+    CREATE TABLE IF NOT EXISTS drafts (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL,
+      recipients_to TEXT NOT NULL DEFAULT '',
+      recipients_cc TEXT NOT NULL DEFAULT '',
+      subject TEXT NOT NULL DEFAULT '',
+      text_body TEXT NOT NULL DEFAULT '',
+      html_body TEXT NOT NULL DEFAULT '',
+      attachments_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
   const columns = database.prepare('PRAGMA table_info(messages)').all();
   if (!columns.some((column) => column.name === 'folder')) {
@@ -211,6 +242,18 @@ function db() {
   }
   if (!localFolderColumns.some((column) => column.name === 'parent_id')) {
     database.exec('ALTER TABLE local_folders ADD COLUMN parent_id INTEGER');
+  }
+  if (!localFolderColumns.some((column) => column.name === 'system_type')) {
+    database.exec('ALTER TABLE local_folders ADD COLUMN system_type TEXT');
+  }
+  if (!localFolderColumns.some((column) => column.name === 'source_account_id')) {
+    database.exec('ALTER TABLE local_folders ADD COLUMN source_account_id TEXT');
+  }
+  if (!localFolderColumns.some((column) => column.name === 'source_folder_path')) {
+    database.exec('ALTER TABLE local_folders ADD COLUMN source_folder_path TEXT');
+  }
+  if (!localFolderColumns.some((column) => column.name === 'color')) {
+    database.exec("ALTER TABLE local_folders ADD COLUMN color TEXT NOT NULL DEFAULT ''");
   }
   ensureLocalStorage(database);
   return database;
@@ -335,6 +378,126 @@ function listMessages(accountId, folder = 'INBOX', limit = 100) {
   `).all(accountId, folder, Math.min(Math.max(Number(limit) || 100, 1), 500));
 }
 
+function searchMessages(query, limit = 300) {
+  const value = `%${String(query || '').trim().replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
+  if (value === '%%') return [];
+  return db().prepare(`
+    SELECT id, account_id AS accountId, folder, subject, sender, recipients,
+           received_at AS receivedAt, preview, is_read AS isRead
+      FROM messages
+     WHERE subject LIKE ? ESCAPE '\\' COLLATE NOCASE
+        OR sender LIKE ? ESCAPE '\\' COLLATE NOCASE
+        OR recipients LIKE ? ESCAPE '\\' COLLATE NOCASE
+        OR text_body LIKE ? ESCAPE '\\' COLLATE NOCASE
+     ORDER BY COALESCE(received_at, created_at) DESC
+     LIMIT ?
+  `).all(value, value, value, value, Math.min(Math.max(Number(limit) || 300, 1), 1000));
+}
+
+function listDrafts() {
+  return db().prepare(`
+    SELECT id, account_id AS accountId, recipients_to AS recipientsTo,
+           subject, substr(text_body, 1, 180) AS preview,
+           created_at AS createdAt, updated_at AS updatedAt
+      FROM drafts ORDER BY updated_at DESC
+  `).all();
+}
+
+function getDraft(draftId) {
+  const draft = db().prepare(`
+    SELECT id, account_id AS accountId, recipients_to AS recipientsTo,
+           recipients_cc AS recipientsCc, subject, text_body AS textBody,
+           html_body AS htmlBody, attachments_json AS attachmentsJson,
+           created_at AS createdAt, updated_at AS updatedAt
+      FROM drafts WHERE id = ?
+  `).get(String(draftId));
+  if (!draft) throw new Error('Brouillon introuvable.');
+  try {
+    draft.attachments = JSON.parse(draft.attachmentsJson || '[]');
+  } catch {
+    draft.attachments = [];
+  }
+  delete draft.attachmentsJson;
+  return draft;
+}
+
+function saveDraft(draft) {
+  const existing = draft?.id ? db().prepare('SELECT created_at AS createdAt FROM drafts WHERE id = ?').get(String(draft.id)) : null;
+  const id = existing ? String(draft.id) : randomUUID();
+  const now = new Date().toISOString();
+  const attachments = (Array.isArray(draft?.attachments) ? draft.attachments : [])
+    .filter((attachment) => attachment && typeof attachment.path === 'string')
+    .map((attachment) => ({ path: attachment.path, name: String(attachment.name || ''), size: Number(attachment.size || 0) }));
+  db().prepare(`
+    INSERT INTO drafts (
+      id, account_id, recipients_to, recipients_cc, subject, text_body,
+      html_body, attachments_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      account_id = excluded.account_id, recipients_to = excluded.recipients_to,
+      recipients_cc = excluded.recipients_cc, subject = excluded.subject,
+      text_body = excluded.text_body, html_body = excluded.html_body,
+      attachments_json = excluded.attachments_json, updated_at = excluded.updated_at
+  `).run(
+    id, String(draft?.accountId || ''), String(draft?.to || ''), String(draft?.cc || ''),
+    String(draft?.subject || ''), String(draft?.body || ''), String(draft?.htmlBody || ''),
+    JSON.stringify(attachments), existing?.createdAt || now, now
+  );
+  return getDraft(id);
+}
+
+function deleteDraft(draftId) {
+  const result = db().prepare('DELETE FROM drafts WHERE id = ?').run(String(draftId));
+  return { deleted: Boolean(result.changes) };
+}
+
+function ensureSystemLocalFolder(systemType, name) {
+  const database = db();
+  let folder = database.prepare('SELECT id, name, disk_name AS diskName FROM local_folders WHERE system_type = ?').get(String(systemType));
+  if (folder) return { ...folder, id: Number(folder.id) };
+  let chosenName = String(name).slice(0, 80);
+  let suffix = 1;
+  const nameExists = database.prepare('SELECT 1 FROM local_folders WHERE name = ? COLLATE NOCASE AND parent_id IS NULL');
+  while (nameExists.get(chosenName)) {
+    suffix += 1;
+    const ending = ` (${suffix})`;
+    chosenName = `${String(name).slice(0, 80 - ending.length)}${ending}`;
+  }
+  const diskName = uniqueDiskName(database, chosenName);
+  const directory = folderPathFromDiskName(diskName);
+  fs.mkdirSync(directory, { recursive: false });
+  const result = database.prepare('INSERT INTO local_folders (name, parent_id, disk_name, system_type, created_at) VALUES (?, NULL, ?, ?, ?)')
+    .run(chosenName, diskName, String(systemType), new Date().toISOString());
+  return { id: Number(result.lastInsertRowid), name: chosenName, diskName };
+}
+
+function storeSentMessage(account, message) {
+  const folder = ensureSystemLocalFolder('sent', 'Envoyés');
+  const attachments = [];
+  for (const candidate of Array.isArray(message.attachments) ? message.attachments : []) {
+    if (!candidate?.path || !fs.existsSync(candidate.path)) continue;
+    const content = fs.readFileSync(candidate.path);
+    attachments.push({ filename: path.basename(candidate.path), content, contentType: 'application/octet-stream' });
+  }
+  const messageId = storeMessage({
+    accountId: '__local__',
+    folder: `local:${folder.id}`,
+    remoteId: `sent-${randomUUID()}`,
+    subject: message.subject,
+    from: `${account.name} <${account.email}>`,
+    to: [message.to, message.cc].filter(Boolean).join(', '),
+    date: new Date(),
+    text: message.body,
+    html: message.htmlBody,
+    attachments,
+    isRead: true
+  });
+  const stored = db().prepare('SELECT * FROM messages WHERE id = ?').get(messageId);
+  const emlFilename = writeMessageFile(db(), stored, folder.diskName);
+  db().prepare('UPDATE messages SET eml_filename = ? WHERE id = ?').run(emlFilename, messageId);
+  return { id: messageId, folderId: folder.id, path: path.join(folderPathFromDiskName(folder.diskName), emlFilename) };
+}
+
 function getMessage(id) {
   const message = db().prepare(`
     SELECT id, account_id AS accountId, folder, remote_id AS remoteId, subject, sender, recipients,
@@ -420,6 +583,73 @@ function getMessage(id) {
   };
 }
 
+function listRuleCandidateMessages(accountId, folder) {
+  return db().prepare(`
+    SELECT id, account_id AS accountId, folder, remote_id AS remoteId,
+           subject, sender, recipients, text_body AS textBody
+      FROM messages
+     WHERE account_id = ? AND folder = ?
+     ORDER BY COALESCE(received_at, created_at) DESC
+  `).all(String(accountId), String(folder));
+}
+
+function listMailRules() {
+  return db().prepare(`
+    SELECT id, name, account_id AS accountId, match_field AS matchField,
+           match_type AS matchType, match_value AS matchValue,
+           target_type AS targetType, target_value AS targetValue,
+           enabled, created_at AS createdAt, updated_at AS updatedAt
+      FROM mail_rules ORDER BY enabled DESC, name COLLATE NOCASE
+  `).all().map((rule) => ({ ...rule, enabled: Boolean(rule.enabled) }));
+}
+
+function saveMailRule(rule) {
+  const allowedFields = ['sender', 'recipients', 'subject', 'textBody'];
+  const allowedTypes = ['contains', 'equals', 'startsWith', 'endsWith'];
+  const allowedTargets = ['local', 'server'];
+  const name = String(rule?.name || '').trim();
+  const accountId = String(rule?.accountId || '').trim();
+  const matchField = allowedFields.includes(rule?.matchField) ? rule.matchField : 'sender';
+  const matchType = allowedTypes.includes(rule?.matchType) ? rule.matchType : 'contains';
+  const matchValue = String(rule?.matchValue || '').trim();
+  const targetType = allowedTargets.includes(rule?.targetType) ? rule.targetType : 'local';
+  const targetValue = String(rule?.targetValue || '').trim();
+  if (!name || !accountId || !matchValue || !targetValue) throw new Error('Tous les champs de la règle sont obligatoires.');
+  const existing = rule?.id ? db().prepare('SELECT created_at AS createdAt FROM mail_rules WHERE id = ?').get(String(rule.id)) : null;
+  const id = existing ? String(rule.id) : randomUUID();
+  const now = new Date().toISOString();
+  db().prepare(`
+    INSERT INTO mail_rules (
+      id, name, account_id, match_field, match_type, match_value,
+      target_type, target_value, enabled, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name, account_id = excluded.account_id,
+      match_field = excluded.match_field, match_type = excluded.match_type,
+      match_value = excluded.match_value, target_type = excluded.target_type,
+      target_value = excluded.target_value, enabled = excluded.enabled,
+      updated_at = excluded.updated_at
+  `).run(id, name, accountId, matchField, matchType, matchValue, targetType, targetValue, rule.enabled === false ? 0 : 1, existing?.createdAt || now, now);
+  return listMailRules().find((item) => item.id === id);
+}
+
+function deleteMailRule(ruleId) {
+  const database = db();
+  database.prepare('DELETE FROM mail_rule_applications WHERE rule_id = ?').run(String(ruleId));
+  const result = database.prepare('DELETE FROM mail_rules WHERE id = ?').run(String(ruleId));
+  if (!result.changes) throw new Error('Règle introuvable.');
+  return { deleted: true };
+}
+
+function isMailRuleApplied(ruleId, messageId) {
+  return Boolean(db().prepare('SELECT 1 FROM mail_rule_applications WHERE rule_id = ? AND message_id = ?').get(String(ruleId), String(messageId)));
+}
+
+function markMailRuleApplied(ruleId, messageId) {
+  db().prepare('INSERT OR IGNORE INTO mail_rule_applications (rule_id, message_id, applied_at) VALUES (?, ?, ?)')
+    .run(String(ruleId), String(messageId), new Date().toISOString());
+}
+
 function getMessageReference(id) {
   const message = db().prepare(`
     SELECT id, account_id AS accountId, folder, remote_id AS remoteId, is_read AS isRead
@@ -464,7 +694,7 @@ function listLocalFolders() {
   const database = db();
   ensureLocalStorage(database);
   return database.prepare(`
-    SELECT id, name, parent_id AS parentId, disk_name AS diskName,
+    SELECT id, name, parent_id AS parentId, disk_name AS diskName, color,
            (SELECT COUNT(*) FROM messages
              WHERE account_id = '__local__' AND folder = 'local:' || local_folders.id) AS messageCount
       FROM local_folders
@@ -485,6 +715,14 @@ function getLocalFolderPath(localFolderId) {
   const directory = folderPathFromDiskName(folder.diskName);
   fs.mkdirSync(directory, { recursive: true });
   return directory;
+}
+
+function setLocalFolderColor(localFolderId, colorValue) {
+  const allowedColors = ['', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'gray'];
+  const color = allowedColors.includes(String(colorValue || '')) ? String(colorValue || '') : '';
+  const result = db().prepare('UPDATE local_folders SET color = ? WHERE id = ?').run(color, Number(localFolderId));
+  if (!result.changes) throw new Error('Dossier local introuvable.');
+  return { updated: true, id: Number(localFolderId), color };
 }
 
 function listUnindexedEmlFiles() {
@@ -611,6 +849,9 @@ function copyStoredFolderTreeToLocal(accountId, folderDescriptors) {
   }
   const rootDescriptor = descriptors.find((descriptor) => descriptor.parentSourcePath === null);
   if (!rootDescriptor) throw new Error('Le dossier source est introuvable.');
+  const existingCopy = database.prepare('SELECT name FROM local_folders WHERE source_account_id = ? AND source_folder_path = ? LIMIT 1')
+    .get(String(accountId), rootDescriptor.sourcePath);
+  if (existingCopy) throw new Error(`Ce dossier a déjà été copié localement sous le nom « ${existingCopy.name} ».`);
 
   const pending = [...descriptors];
   const createdFolders = new Map();
@@ -650,8 +891,13 @@ function copyStoredFolderTreeToLocal(accountId, folderDescriptors) {
       const directory = folderPathFromDiskName(diskName);
       fs.mkdirSync(directory, { recursive: false });
       createdDirectories.push(directory);
-      const folderResult = database.prepare('INSERT INTO local_folders (name, parent_id, disk_name, created_at) VALUES (?, ?, ?, ?)')
-        .run(name, parent?.id ?? null, diskName, new Date().toISOString());
+      const folderResult = database.prepare('INSERT INTO local_folders (name, parent_id, disk_name, source_account_id, source_folder_path, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(
+          name, parent?.id ?? null, diskName,
+          descriptor.parentSourcePath === null ? String(accountId) : null,
+          descriptor.parentSourcePath === null ? descriptor.sourcePath : null,
+          new Date().toISOString()
+        );
       const localFolderId = Number(folderResult.lastInsertRowid);
       const sources = database.prepare('SELECT * FROM messages WHERE account_id = ? AND folder = ?')
         .all(String(accountId), descriptor.sourcePath);
@@ -773,6 +1019,40 @@ function deleteLocalFolder(localFolderId) {
   }
 }
 
+function deleteLocalFolderTree(localFolderId) {
+  const database = db();
+  const folders = database.prepare('SELECT id, parent_id AS parentId, disk_name AS diskName FROM local_folders').all();
+  const root = folders.find((folder) => Number(folder.id) === Number(localFolderId));
+  if (!root) throw new Error('Dossier local introuvable.');
+  const ids = [];
+  const collect = (parentId) => {
+    for (const folder of folders.filter((item) => Number(item.parentId) === Number(parentId))) collect(folder.id);
+    ids.push(Number(parentId));
+  };
+  collect(root.id);
+  const directory = folderPathFromDiskName(root.diskName);
+  const temporaryDirectory = path.join(localRootPath(), `.suppression-arbre-${Number(root.id)}-${randomUUID()}`);
+  if (fs.existsSync(directory)) fs.renameSync(directory, temporaryDirectory);
+  database.exec('BEGIN');
+  try {
+    const deleteAttachments = database.prepare(`DELETE FROM attachments WHERE message_id IN (SELECT id FROM messages WHERE account_id = '__local__' AND folder = ?)`);
+    const deleteMessages = database.prepare("DELETE FROM messages WHERE account_id = '__local__' AND folder = ?");
+    const deleteFolder = database.prepare('DELETE FROM local_folders WHERE id = ?');
+    for (const id of ids) {
+      deleteAttachments.run(`local:${id}`);
+      deleteMessages.run(`local:${id}`);
+      deleteFolder.run(id);
+    }
+    database.exec('COMMIT');
+    if (fs.existsSync(temporaryDirectory)) fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    return { deleted: true, folderCount: ids.length };
+  } catch (error) {
+    database.exec('ROLLBACK');
+    if (fs.existsSync(temporaryDirectory) && !fs.existsSync(directory)) fs.renameSync(temporaryDirectory, directory);
+    throw error;
+  }
+}
+
 function getAttachment(messageId, attachmentIndex) {
   const attachment = db().prepare(`
     SELECT filename, content_type AS contentType, size, content
@@ -873,7 +1153,7 @@ function listContactGroups() {
   }));
 }
 
-function saveContactGroup(nameValue, contactIds) {
+function saveContactGroup(nameValue, contactIds, groupId = null) {
   const database = db();
   const name = String(nameValue || '').trim();
   const ids = [...new Set((Array.isArray(contactIds) ? contactIds : []).map(String).filter(Boolean))];
@@ -883,11 +1163,17 @@ function saveContactGroup(nameValue, contactIds) {
   const placeholders = ids.map(() => '?').join(', ');
   const existing = database.prepare(`SELECT id FROM contacts WHERE id IN (${placeholders})`).all(...ids);
   if (existing.length !== ids.length) throw new Error('Un des contacts sélectionnés est introuvable.');
-  const id = randomUUID();
+  const id = String(groupId || '').trim() || randomUUID();
   database.exec('BEGIN');
   try {
-    database.prepare('INSERT INTO contact_groups (id, name, created_at) VALUES (?, ?, ?)')
-      .run(id, name, new Date().toISOString());
+    if (groupId) {
+      const result = database.prepare('UPDATE contact_groups SET name = ? WHERE id = ?').run(name, id);
+      if (!result.changes) throw new Error('Groupe introuvable.');
+      database.prepare('DELETE FROM contact_group_members WHERE group_id = ?').run(id);
+    } else {
+      database.prepare('INSERT INTO contact_groups (id, name, created_at) VALUES (?, ?, ?)')
+        .run(id, name, new Date().toISOString());
+    }
     const insertMember = database.prepare('INSERT INTO contact_group_members (group_id, contact_id) VALUES (?, ?)');
     for (const contactId of ids) insertMember.run(id, contactId);
     database.exec('COMMIT');
@@ -895,6 +1181,54 @@ function saveContactGroup(nameValue, contactIds) {
   } catch (error) {
     database.exec('ROLLBACK');
     if (/UNIQUE/i.test(String(error.message))) throw new Error('Un groupe porte déjà ce nom.');
+    throw error;
+  }
+}
+
+function mergeDuplicateContacts() {
+  const database = db();
+  const contacts = database.prepare(`
+    SELECT id, name, email, phone, company, notes, created_at AS createdAt
+      FROM contacts ORDER BY created_at, id
+  `).all();
+  const groups = new Map();
+  for (const contact of contacts) {
+    const key = String(contact.email || '').trim().toLocaleLowerCase('fr');
+    if (!key) continue;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(contact);
+  }
+  let merged = 0;
+  database.exec('BEGIN');
+  try {
+    const updateContact = database.prepare(`
+      UPDATE contacts SET name = ?, phone = ?, company = ?, notes = ?, updated_at = ? WHERE id = ?
+    `);
+    const copyMemberships = database.prepare(`
+      INSERT OR IGNORE INTO contact_group_members (group_id, contact_id)
+      SELECT group_id, ? FROM contact_group_members WHERE contact_id = ?
+    `);
+    const deleteMemberships = database.prepare('DELETE FROM contact_group_members WHERE contact_id = ?');
+    const deleteDuplicate = database.prepare('DELETE FROM contacts WHERE id = ?');
+    for (const duplicates of groups.values()) {
+      if (duplicates.length < 2) continue;
+      const keep = duplicates[0];
+      for (const duplicate of duplicates.slice(1)) {
+        keep.name = keep.name || duplicate.name;
+        keep.phone = keep.phone || duplicate.phone;
+        keep.company = keep.company || duplicate.company;
+        keep.notes = [keep.notes, duplicate.notes].filter(Boolean).filter((value, index, values) => values.indexOf(value) === index).join('\n');
+        copyMemberships.run(keep.id, duplicate.id);
+        deleteMemberships.run(duplicate.id);
+        deleteDuplicate.run(duplicate.id);
+        merged += 1;
+      }
+      updateContact.run(keep.name, keep.phone, keep.company, keep.notes, new Date().toISOString(), keep.id);
+    }
+    database.exec('COMMIT');
+    return { merged };
+  } catch (error) {
+    database.exec('ROLLBACK');
     throw error;
   }
 }
@@ -918,27 +1252,42 @@ module.exports = {
   changeDataDirectory,
   deleteContact,
   deleteContactGroup,
+  deleteDraft,
+  deleteMailRule,
   deleteAccountMessages,
   copyMessageToLocal,
   copyStoredFolderToLocal,
   copyStoredFolderTreeToLocal,
   createLocalFolder,
   deleteLocalFolder,
+  deleteLocalFolderTree,
   getAttachment,
+  getDraft,
   getLocalFolderPath,
   getMessage,
   getMessageReference,
   listMessages,
   listContacts,
   listContactGroups,
+  listMailRules,
+  listDrafts,
+  listRuleCandidateMessages,
   listLocalFolders,
   listUnindexedEmlFiles,
+  mergeDuplicateContacts,
   moveLocalFolder,
   registerLocalEmlFile,
   removeLocalMessage,
   setMessageRead,
   saveContact,
   saveContactGroup,
-  storeMessage
+  saveMailRule,
+  saveDraft,
+  setLocalFolderColor,
+  isMailRuleApplied,
+  markMailRuleApplied,
+  storeMessage,
+  storeSentMessage,
+  searchMessages
 };
 

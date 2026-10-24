@@ -3,11 +3,12 @@
   font-family: "Segoe UI", system-ui, sans-serif;
   color: #1b2430;
   background: #fafbfc;
+  --ui-font-size: 15px;
 }
 
 * { box-sizing: border-box; }
 html, body { width: 100%; height: 100%; }
-body { margin: 0; overflow: hidden; }
+body { margin: 0; overflow: hidden; font-size: var(--ui-font-size); }
 button { font: inherit; cursor: pointer; }
 button:disabled { cursor: wait; opacity: .6; }
 .primary { border-color: #248d84 !important; color: white !important; background: #248d84 !important; }

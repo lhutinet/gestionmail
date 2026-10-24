@@ -25,6 +25,10 @@ const composeForm = document.querySelector('#compose-form');
 const composeError = document.querySelector('#compose-error');
 const sendButton = document.querySelector('#send-message');
 const searchInput = document.querySelector('#message-search');
+const searchScope = document.querySelector('#search-scope');
+const bulkActions = document.querySelector('#bulk-actions');
+const bulkCount = document.querySelector('#bulk-count');
+const bulkTarget = document.querySelector('#bulk-target');
 const autoSyncSelect = document.querySelector('#auto-sync');
 const selectedAttachments = document.querySelector('#selected-attachments');
 const composeBodyEditor = document.querySelector('#compose-body-editor');
@@ -33,6 +37,11 @@ const composeFormat = document.querySelector('#compose-format');
 const composeFontSize = document.querySelector('#compose-font-size');
 const composeTextColor = document.querySelector('#compose-text-color');
 const composeLinkUrl = document.querySelector('#compose-link-url');
+const composeTemplate = document.querySelector('#compose-template');
+const signatureDialog = document.querySelector('#signature-dialog');
+const signatureForm = document.querySelector('#signature-form');
+const signatureText = document.querySelector('#signature-text');
+const signatureError = document.querySelector('#signature-error');
 const recipientEditors = {
   to: document.querySelector('#compose-to-editor'),
   cc: document.querySelector('#compose-cc-editor')
@@ -57,6 +66,22 @@ const settingsDialog = document.querySelector('#settings-dialog');
 const settingsForm = document.querySelector('#settings-form');
 const settingsError = document.querySelector('#settings-error');
 const saveSettingsButton = document.querySelector('#save-settings');
+const todoDialog = document.querySelector('#todo-dialog');
+const todoForm = document.querySelector('#todo-form');
+const todoList = document.querySelector('#todo-list');
+const todoError = document.querySelector('#todo-error');
+const todoCount = document.querySelector('#todo-count');
+const rulesDialog = document.querySelector('#rules-dialog');
+const ruleForm = document.querySelector('#rule-form');
+const ruleList = document.querySelector('#rule-list');
+const ruleError = document.querySelector('#rule-error');
+const ruleAccount = document.querySelector('#rule-account');
+const ruleTargetType = document.querySelector('#rule-target-type');
+const ruleTargetValue = document.querySelector('#rule-target-value');
+const draftsDialog = document.querySelector('#drafts-dialog');
+const draftList = document.querySelector('#draft-list');
+const draftError = document.querySelector('#draft-error');
+const draftCount = document.querySelector('#draft-count');
 const contactsDialog = document.querySelector('#contacts-dialog');
 const contactForm = document.querySelector('#contact-form');
 const contactList = document.querySelector('#contact-list');
@@ -84,10 +109,14 @@ let selectedFolder = 'INBOX';
 let folders = [];
 let localFolders = [];
 let messages = [];
+const selectedMessageIds = new Set();
+let globalSearchTimer = null;
 let composeAttachments = [];
 const composeRecipients = { to: [], cc: [] };
 let autoSyncTimer = null;
 let composeSelectionRange = null;
+let lastAppliedComposeColor = null;
+let composerData = { signature: '', templates: [] };
 let syncInProgress = false;
 let viewingLocal = false;
 let messageToCopy = null;
@@ -96,21 +125,115 @@ let localFolderParentId = null;
 let folderCopyInProgress = false;
 let contacts = [];
 let contactGroups = [];
+let todos = [];
+let todoFilter = 'open';
+let mailRules = [];
+let ruleServerFolders = [];
+let drafts = [];
+let currentDraftId = null;
+let draftSaveTimer = null;
+let suspendDraftAutosave = false;
 const selectedContactIds = new Set();
 let recipientTarget = 'to';
 let pendingGroupContactIds = [];
 let contactGroupCreatedMessage = '';
+let pendingGroupId = null;
 const collapsedFolders = new Set();
 const collapsedLocalFolders = new Set();
 let currentSettings = {
   autoSyncMinutes: 0,
   notificationsEnabled: true,
+  fontSize: 15,
   dataDirectory: ''
 };
 const lastAccountStorageKey = 'gestionmail.lastAccountId';
 const columnWidthsStorageKey = 'gestionmail.columnWidths';
 const defaultColumnWidths = { local: 190, accounts: 250, messages: 360 };
 let columnWidths = { ...defaultColumnWidths };
+
+function applyInterfaceFontSize(value) {
+  const size = [13, 14, 15, 16, 17].includes(Number(value)) ? Number(value) : 15;
+  document.documentElement.style.setProperty('--ui-font-size', `${size}px`);
+}
+
+let contextMenu = null;
+
+function closeContextMenu() {
+  contextMenu?.remove();
+  contextMenu = null;
+}
+
+function showContextMenu(event, items) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeContextMenu();
+  const available = items.filter((item) => item && (!item.hidden));
+  if (!available.length) return;
+  const menu = document.createElement('div');
+  menu.className = 'context-menu';
+  menu.setAttribute('role', 'menu');
+  for (const item of available) {
+    if (item.separator) {
+      const separator = document.createElement('div');
+      separator.className = 'context-menu-separator';
+      menu.append(separator);
+      continue;
+    }
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = item.danger ? 'danger' : '';
+    button.textContent = item.label;
+    button.disabled = Boolean(item.disabled);
+    button.setAttribute('role', 'menuitem');
+    button.addEventListener('pointerdown', (pointerEvent) => pointerEvent.preventDefault());
+    button.addEventListener('click', async () => {
+      closeContextMenu();
+      try {
+        await item.action?.();
+      } catch (error) {
+        statusLine.textContent = readableError(error);
+      }
+    });
+    menu.append(button);
+  }
+  document.body.append(menu);
+  const bounds = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(6, Math.min(event.clientX, window.innerWidth - bounds.width - 6))}px`;
+  menu.style.top = `${Math.max(6, Math.min(event.clientY, window.innerHeight - bounds.height - 6))}px`;
+  contextMenu = menu;
+}
+
+document.addEventListener('pointerdown', (event) => {
+  if (contextMenu && !contextMenu.contains(event.target)) closeContextMenu();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeContextMenu();
+});
+window.addEventListener('blur', closeContextMenu);
+window.addEventListener('resize', closeContextMenu);
+document.addEventListener('scroll', closeContextMenu, true);
+document.addEventListener('contextmenu', (event) => {
+  if (event.defaultPrevented) return;
+  const editable = event.target.closest('input, textarea, [contenteditable="true"]');
+  const selection = window.getSelection();
+  if (!editable && selection?.isCollapsed !== false) return;
+  const items = [];
+  if (editable) {
+    items.push(
+      { label: 'Annuler', action: () => window.gestionMail.editorCommand('undo') },
+      { label: 'Rétablir', action: () => window.gestionMail.editorCommand('redo') },
+      { separator: true },
+      { label: 'Couper', action: () => window.gestionMail.editorCommand('cut') },
+      { label: 'Copier', action: () => window.gestionMail.editorCommand('copy') },
+      { label: 'Coller', action: () => window.gestionMail.editorCommand('paste') },
+      { separator: true },
+      { label: 'Tout sélectionner', action: () => window.gestionMail.editorCommand('selectAll') }
+    );
+  } else {
+    items.push({ label: 'Copier', action: () => window.gestionMail.editorCommand('copy') });
+  }
+  showContextMenu(event, items);
+});
 
 try {
   const savedColumnWidths = JSON.parse(localStorage.getItem(columnWidthsStorageKey) || '{}');
@@ -227,6 +350,273 @@ function lastFolderStorageKey(accountId) {
   return `gestionmail.lastFolder.${accountId}`;
 }
 
+function updateTodoCount() {
+  todoCount.textContent = String(todos.filter((todo) => !todo.done).length);
+}
+
+function renderTodos() {
+  const visible = todos.filter((todo) => todoFilter === 'all' || (todoFilter === 'done' ? todo.done : !todo.done));
+  todoList.replaceChildren();
+  if (!visible.length) {
+    const empty = document.createElement('div');
+    empty.className = 'contact-empty';
+    empty.textContent = todoFilter === 'open' ? 'Aucune tâche ouverte.' : 'Aucune tâche dans cette vue.';
+    todoList.append(empty);
+  }
+  const priorityOrder = { high: 0, normal: 1, low: 2 };
+  visible.sort((left, right) => priorityOrder[left.priority] - priorityOrder[right.priority] || left.category.localeCompare(right.category, 'fr'));
+  for (const todo of visible) {
+    const row = document.createElement('div');
+    row.className = `todo-row${todo.done ? ' done' : ''}`;
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = todo.done;
+    checkbox.addEventListener('change', async () => {
+      try {
+        const saved = await window.gestionMail.saveTodo({ ...todo, done: checkbox.checked });
+        todos = todos.map((item) => item.id === saved.id ? saved : item);
+        updateTodoCount();
+        renderTodos();
+      } catch (error) {
+        todoError.textContent = readableError(error);
+      }
+    });
+    const content = document.createElement('div');
+    const title = document.createElement('span');
+    title.className = 'todo-title';
+    title.textContent = todo.title;
+    const meta = document.createElement('span');
+    meta.className = 'todo-meta';
+    meta.textContent = todo.category;
+    content.append(title, meta);
+    const priority = document.createElement('span');
+    priority.className = `todo-priority ${todo.priority}`;
+    priority.textContent = todo.priority === 'high' ? 'Haute' : todo.priority === 'low' ? 'Basse' : 'Normale';
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'todo-delete';
+    remove.textContent = '×';
+    remove.title = 'Supprimer la tâche';
+    remove.addEventListener('click', async () => {
+      try {
+        await window.gestionMail.deleteTodo(todo.id);
+        todos = todos.filter((item) => item.id !== todo.id);
+        updateTodoCount();
+        renderTodos();
+      } catch (error) {
+        todoError.textContent = readableError(error);
+      }
+    });
+    row.append(checkbox, content, priority, remove);
+    todoList.append(row);
+  }
+}
+
+async function loadTodos() {
+  todos = await window.gestionMail.listTodos();
+  updateTodoCount();
+  if (todoDialog.open) renderTodos();
+}
+
+async function loadDrafts() {
+  drafts = await window.gestionMail.listDrafts();
+  draftCount.textContent = String(drafts.length);
+  if (draftsDialog.open) renderDrafts();
+}
+
+function renderDrafts() {
+  draftList.replaceChildren();
+  if (!drafts.length) {
+    const empty = document.createElement('div');
+    empty.className = 'contact-empty';
+    empty.textContent = 'Aucun brouillon.';
+    draftList.append(empty);
+    return;
+  }
+  for (const draft of drafts) {
+    const row = document.createElement('div');
+    row.className = 'draft-row';
+    const main = document.createElement('button');
+    main.type = 'button';
+    main.className = 'draft-main';
+    const title = document.createElement('strong');
+    title.textContent = draft.subject || '(Sans objet)';
+    const detail = document.createElement('span');
+    detail.textContent = `${draft.recipientsTo || 'Aucun destinataire'} — ${new Date(draft.updatedAt).toLocaleString('fr-FR')}`;
+    main.append(title, detail);
+    main.addEventListener('click', async () => {
+      try {
+        const complete = await window.gestionMail.getDraft(draft.id);
+        if (complete.accountId && complete.accountId !== selectedAccountId) await selectAccount(complete.accountId);
+        draftsDialog.close();
+        openComposer({
+          draftId: complete.id,
+          to: complete.recipientsTo,
+          cc: complete.recipientsCc,
+          subject: complete.subject,
+          body: complete.textBody,
+          htmlBody: complete.htmlBody,
+          attachments: complete.attachments
+        });
+      } catch (error) {
+        draftError.textContent = readableError(error);
+      }
+    });
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'todo-delete';
+    remove.textContent = '×';
+    remove.title = 'Supprimer le brouillon';
+    remove.addEventListener('click', async () => {
+      try {
+        await window.gestionMail.deleteDraft(draft.id);
+        await loadDrafts();
+      } catch (error) {
+        draftError.textContent = readableError(error);
+      }
+    });
+    row.append(main, remove);
+    draftList.append(row);
+  }
+}
+
+function draftPayload() {
+  return {
+    id: currentDraftId,
+    accountId: selectedAccountId,
+    to: composeRecipients.to.join(', '),
+    cc: composeRecipients.cc.join(', '),
+    subject: composeForm.elements.subject.value,
+    body: composeBodyEditor.innerText.replace(/\u00a0/g, ' ').trimEnd(),
+    htmlBody: composeBodyEditor.innerHTML.trim(),
+    attachments: composeAttachments
+  };
+}
+
+async function saveCurrentDraft() {
+  if (suspendDraftAutosave || !composeDialog.open || !selectedAccountId) return;
+  const draft = draftPayload();
+  const isAutomaticSignatureOnly = Boolean(composerData.signature) && draft.htmlBody === signatureHtml();
+  const hasContent = draft.to || draft.cc || draft.subject.trim() || (!isAutomaticSignatureOnly && draft.body.trim()) || draft.attachments.length;
+  if (!hasContent && !currentDraftId) return;
+  const saved = await window.gestionMail.saveDraft(draft);
+  currentDraftId = saved.id;
+  await loadDrafts();
+}
+
+function queueDraftSave() {
+  if (suspendDraftAutosave || !composeDialog.open) return;
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(() => {
+    saveCurrentDraft().catch((error) => {
+      composeError.textContent = `Brouillon non enregistré : ${readableError(error)}`;
+    });
+  }, 800);
+}
+
+function resetRuleForm() {
+  ruleForm.reset();
+  ruleForm.elements.id.value = '';
+  ruleForm.elements.enabled.checked = true;
+  ruleAccount.value = selectedAccountId || accounts[0]?.id || '';
+  ruleError.textContent = '';
+  renderRuleTargets();
+}
+
+function renderRuleTargets() {
+  ruleTargetValue.replaceChildren();
+  const candidates = ruleTargetType.value === 'local'
+    ? localFolders.map((folder) => ({ value: String(folder.id), label: folder.name }))
+    : ruleServerFolders.filter((folder) => folder.selectable !== false).map((folder) => ({ value: folder.path, label: folder.name || folder.path }));
+  for (const candidate of candidates) {
+    const option = document.createElement('option');
+    option.value = candidate.value;
+    option.textContent = candidate.label;
+    ruleTargetValue.append(option);
+  }
+  if (!candidates.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'Aucun dossier disponible';
+    ruleTargetValue.append(option);
+  }
+}
+
+async function selectRule(rule) {
+  for (const [name, value] of Object.entries(rule)) {
+    if (ruleForm.elements[name] && name !== 'enabled') ruleForm.elements[name].value = value;
+  }
+  ruleForm.elements.enabled.checked = rule.enabled;
+  if (rule.accountId !== selectedAccountId) ruleServerFolders = await window.gestionMail.listFolders(rule.accountId);
+  else ruleServerFolders = folders;
+  ruleTargetType.value = rule.targetType;
+  renderRuleTargets();
+  ruleTargetValue.value = rule.targetValue;
+}
+
+function renderRules() {
+  ruleList.replaceChildren();
+  if (!mailRules.length) {
+    const empty = document.createElement('div');
+    empty.className = 'contact-empty';
+    empty.textContent = 'Aucune règle de tri.';
+    ruleList.append(empty);
+    return;
+  }
+  for (const rule of mailRules) {
+    const row = document.createElement('div');
+    row.className = `rule-row${rule.enabled ? '' : ' disabled'}`;
+    const main = document.createElement('button');
+    main.type = 'button';
+    main.className = 'rule-main';
+    const title = document.createElement('strong');
+    title.textContent = rule.name;
+    const detail = document.createElement('small');
+    detail.textContent = `${rule.matchField} ${rule.matchType} « ${rule.matchValue} » → ${rule.targetValue}`;
+    main.append(title, detail);
+    main.addEventListener('click', () => selectRule(rule).catch((error) => {
+      ruleError.textContent = readableError(error);
+    }));
+    const kind = document.createElement('span');
+    kind.className = 'rule-target-kind';
+    kind.textContent = rule.targetType === 'local' ? 'Local' : 'Serveur';
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'todo-delete';
+    remove.textContent = '×';
+    remove.title = 'Supprimer la règle';
+    remove.addEventListener('click', async () => {
+      try {
+        await window.gestionMail.deleteMailRule(rule.id);
+        mailRules = mailRules.filter((item) => item.id !== rule.id);
+        renderRules();
+      } catch (error) {
+        ruleError.textContent = readableError(error);
+      }
+    });
+    row.append(main, kind, remove);
+    ruleList.append(row);
+  }
+}
+
+async function openRulesDialog() {
+  await Promise.all([loadLocalFolders(), loadContacts()]);
+  mailRules = await window.gestionMail.listMailRules();
+  ruleAccount.replaceChildren();
+  for (const account of accounts) {
+    const option = document.createElement('option');
+    option.value = account.id;
+    option.textContent = `${account.name} — ${account.email}`;
+    ruleAccount.append(option);
+  }
+  resetRuleForm();
+  ruleServerFolders = ruleAccount.value === selectedAccountId ? folders : await window.gestionMail.listFolders(ruleAccount.value);
+  renderRuleTargets();
+  renderRules();
+  settingsDialog.close();
+  rulesDialog.showModal();
+}
+
 function readableError(error) {
   const value = String(error?.message || error || 'Erreur inconnue');
   return value.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
@@ -293,6 +683,7 @@ function renderComposeAttachments() {
     remove.addEventListener('click', () => {
       composeAttachments.splice(index, 1);
       renderComposeAttachments();
+      queueDraftSave();
     });
     row.append(label, remove);
     selectedAttachments.append(row);
@@ -409,11 +800,12 @@ function updateGroupCreationState() {
 function closeContactGroupDialog() {
   pendingGroupContactIds = [];
   contactGroupCreatedMessage = '';
+  pendingGroupId = null;
   contactGroupError.textContent = '';
   if (contactGroupDialog.open) contactGroupDialog.close();
 }
 
-function openContactGroupDialog(contactIds, createdMessage = '') {
+function openContactGroupDialog(contactIds, createdMessage = '', groupId = null, groupName = '') {
   const ids = [...new Set(contactIds.map(String).filter(Boolean))];
   if (ids.length < 2) {
     contactError.textContent = 'Sélectionnez au moins deux contacts.';
@@ -421,7 +813,9 @@ function openContactGroupDialog(contactIds, createdMessage = '') {
   }
   pendingGroupContactIds = ids;
   contactGroupCreatedMessage = createdMessage;
+  pendingGroupId = groupId;
   contactGroupForm.reset();
+  contactGroupName.value = groupName;
   contactGroupError.textContent = '';
   contactGroupSummary.textContent = `${ids.length} contacts sélectionnés`;
   contactGroupDialog.showModal();
@@ -480,6 +874,30 @@ function renderContacts(filter = '', selectedId = '') {
       contactsDialog.close();
       openComposer({ to: contact.email });
     });
+    row.addEventListener('contextmenu', (event) => showContextMenu(event, [
+      { label: 'Écrire un message', disabled: !selectedAccountId, action: () => {
+        contactsDialog.close();
+        openComposer({ to: contact.email });
+      } },
+      { label: 'Modifier le contact', action: () => selectContact(contact, row) },
+      {
+        label: selectedContactIds.has(contact.id) ? 'Retirer de la sélection de groupe' : 'Sélectionner pour un groupe',
+        action: () => {
+          if (selectedContactIds.has(contact.id)) selectedContactIds.delete(contact.id);
+          else selectedContactIds.add(contact.id);
+          renderContacts(contactSearch.value, contactForm.elements.id.value);
+        }
+      },
+      { separator: true },
+      { label: 'Supprimer le contact…', danger: true, action: async () => {
+        if (!window.confirm(`Supprimer le contact « ${contact.name} » ?`)) return;
+        await window.gestionMail.deleteContact(contact.id);
+        selectedContactIds.delete(contact.id);
+        await loadContacts();
+        renderContacts(contactSearch.value);
+        resetContactForm();
+      } }
+    ]));
     wrapper.append(checkbox, row);
     contactList.append(wrapper);
   }
@@ -507,6 +925,35 @@ function renderContactGroups() {
       for (const member of group.members) selectedContactIds.add(member.id);
       renderContacts(contactSearch.value, contactForm.elements.id.value);
     });
+    select.addEventListener('contextmenu', (event) => showContextMenu(event, [
+      { label: 'Écrire au groupe', disabled: !selectedAccountId || !group.members.length, action: () => {
+        contactsDialog.close();
+        openComposer({ to: group.members.map((member) => member.email).join(', ') });
+      } },
+      { label: 'Sélectionner les membres', action: () => {
+        selectedContactIds.clear();
+        for (const member of group.members) selectedContactIds.add(member.id);
+        renderContacts(contactSearch.value, contactForm.elements.id.value);
+      } },
+      { label: 'Modifier le groupe…', action: () => openContactGroupDialog(group.members.map((member) => member.id), '', group.id, group.name) },
+      { separator: true },
+      { label: 'Supprimer le groupe…', danger: true, action: async () => {
+        if (!window.confirm(`Supprimer le groupe « ${group.name} » ? Les contacts seront conservés.`)) return;
+        await window.gestionMail.deleteContactGroup(group.id);
+        await loadContacts();
+      } }
+    ]));
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'contact-group-edit';
+    edit.textContent = '✎';
+    edit.title = `Modifier le groupe ${group.name}`;
+    edit.addEventListener('click', () => {
+      selectedContactIds.clear();
+      for (const member of group.members) selectedContactIds.add(member.id);
+      renderContacts(contactSearch.value, contactForm.elements.id.value);
+      openContactGroupDialog(group.members.map((member) => member.id), '', group.id, group.name);
+    });
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'contact-group-delete';
@@ -521,7 +968,7 @@ function renderContactGroups() {
         contactError.textContent = readableError(error);
       }
     });
-    row.append(select, remove);
+    row.append(select, edit, remove);
     contactGroupList.append(row);
   }
 }
@@ -657,6 +1104,7 @@ function renderRecipientTokens(target) {
     container.append(token);
   }
   syncRecipientValue(target);
+  queueDraftSave();
 }
 
 function addRecipientValues(target, value) {
@@ -735,8 +1183,38 @@ function runComposeCommand(command, value = null) {
   rememberComposeSelection();
 }
 
-function resetComposeBody(value = '') {
-  composeBodyEditor.innerHTML = value ? plainTextToHtml(value) : '';
+function applyComposeTextColor(color) {
+  if (!composeSelectionRange || !composeBodyEditor.contains(composeSelectionRange.commonAncestorContainer)) {
+    composeBodyEditor.focus();
+    document.execCommand('styleWithCSS', false, true);
+    document.execCommand('foreColor', false, color);
+    rememberComposeSelection();
+    return;
+  }
+  const range = composeSelectionRange.cloneRange();
+  if (range.collapsed) {
+    restoreComposeSelection();
+    document.execCommand('styleWithCSS', false, true);
+    document.execCommand('foreColor', false, color);
+    rememberComposeSelection();
+    return;
+  }
+  const span = document.createElement('span');
+  span.style.color = color;
+  span.append(range.extractContents());
+  range.insertNode(span);
+  const coloredRange = document.createRange();
+  coloredRange.selectNodeContents(span);
+  composeSelectionRange = coloredRange.cloneRange();
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(coloredRange);
+  composeBodyEditor.focus();
+  queueDraftSave();
+}
+
+function resetComposeBody(value = '', htmlValue = '') {
+  composeBodyEditor.innerHTML = htmlValue || (value ? plainTextToHtml(value) : '');
   composeSelectionRange = null;
   composeLinkUrl.value = '';
   composeFormat.value = 'p';
@@ -744,9 +1222,35 @@ function resetComposeBody(value = '') {
   composeTextColor.value = '#263243';
 }
 
+function renderComposeTemplates() {
+  composeTemplate.replaceChildren();
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Modèles…';
+  composeTemplate.append(placeholder);
+  for (const template of composerData.templates) {
+    const option = document.createElement('option');
+    option.value = template.id;
+    option.textContent = template.name;
+    composeTemplate.append(option);
+  }
+}
+
+function insertComposeHtml(html) {
+  restoreComposeSelection();
+  document.execCommand('insertHTML', false, html);
+  rememberComposeSelection();
+  queueDraftSave();
+}
+
+function signatureHtml() {
+  return composerData.signature ? `<div class="gestionmail-signature"><br>${composerData.signature}</div>` : '';
+}
+
 composeBodyEditor.addEventListener('keyup', rememberComposeSelection);
 composeBodyEditor.addEventListener('mouseup', rememberComposeSelection);
 composeBodyEditor.addEventListener('input', rememberComposeSelection);
+composeToolbar.addEventListener('pointerdown', rememberComposeSelection, true);
 composeToolbar.addEventListener('mousedown', (event) => {
   if (event.target.closest('button')) event.preventDefault();
 });
@@ -755,7 +1259,16 @@ composeToolbar.querySelectorAll('button[data-command]').forEach((button) => {
 });
 composeFormat.addEventListener('change', () => runComposeCommand('formatBlock', composeFormat.value));
 composeFontSize.addEventListener('change', () => runComposeCommand('fontSize', composeFontSize.value));
-composeTextColor.addEventListener('change', () => runComposeCommand('foreColor', composeTextColor.value));
+composeTextColor.addEventListener('pointerdown', () => {
+  lastAppliedComposeColor = null;
+});
+function handleComposeTextColor() {
+  if (lastAppliedComposeColor === composeTextColor.value) return;
+  lastAppliedComposeColor = composeTextColor.value;
+  applyComposeTextColor(composeTextColor.value);
+}
+composeTextColor.addEventListener('input', handleComposeTextColor);
+composeTextColor.addEventListener('change', handleComposeTextColor);
 document.querySelector('#compose-add-link').addEventListener('click', () => {
   let value = composeLinkUrl.value.trim();
   if (!value) {
@@ -776,6 +1289,89 @@ document.querySelector('#compose-add-link').addEventListener('click', () => {
     rememberComposeSelection();
   } catch {
     composeError.textContent = 'L’adresse du lien est incorrecte.';
+  }
+});
+
+document.querySelector('#compose-inline-image').addEventListener('click', async () => {
+  try {
+    const image = await window.gestionMail.chooseInlineImage();
+    if (!image) return;
+    insertComposeHtml(`<img src="${image.dataUrl}" alt="${escapeHtml(image.name)}">`);
+    composeError.textContent = '';
+  } catch (error) {
+    composeError.textContent = readableError(error);
+  }
+});
+composeTemplate.addEventListener('change', () => {
+  const template = composerData.templates.find((item) => item.id === composeTemplate.value);
+  if (!template) return;
+  composeForm.elements.subject.value = template.subject || '';
+  resetComposeBody('', template.htmlBody || '');
+  composeTemplate.value = template.id;
+  queueDraftSave();
+});
+document.querySelector('#compose-save-template').addEventListener('click', async () => {
+  const name = window.prompt('Nom du modèle :', composeForm.elements.subject.value.trim() || 'Nouveau modèle');
+  if (!name?.trim()) return;
+  try {
+    const saved = await window.gestionMail.saveTemplate({
+      name: name.trim(), subject: composeForm.elements.subject.value, htmlBody: composeBodyEditor.innerHTML
+    });
+    composerData.templates = [...composerData.templates.filter((item) => item.id !== saved.id), saved];
+    renderComposeTemplates();
+    composeTemplate.value = saved.id;
+    composeError.textContent = `Modèle « ${saved.name} » enregistré.`;
+  } catch (error) {
+    composeError.textContent = readableError(error);
+  }
+});
+document.querySelector('#compose-delete-template').addEventListener('click', async () => {
+  const template = composerData.templates.find((item) => item.id === composeTemplate.value);
+  if (!template || !window.confirm(`Supprimer le modèle « ${template.name} » ?`)) return;
+  try {
+    await window.gestionMail.deleteTemplate(template.id);
+    composerData.templates = composerData.templates.filter((item) => item.id !== template.id);
+    renderComposeTemplates();
+    composeError.textContent = 'Modèle supprimé.';
+  } catch (error) {
+    composeError.textContent = readableError(error);
+  }
+});
+document.querySelector('#compose-insert-signature').addEventListener('click', () => {
+  if (!composerData.signature) {
+    signatureText.value = '';
+    signatureError.textContent = 'Créez d’abord la signature de ce compte.';
+    signatureDialog.showModal();
+    return;
+  }
+  insertComposeHtml(signatureHtml());
+});
+document.querySelector('#compose-edit-signature').addEventListener('click', () => {
+  const temporary = document.createElement('div');
+  temporary.innerHTML = composerData.signature || '';
+  signatureText.value = temporary.innerText;
+  signatureError.textContent = '';
+  signatureDialog.showModal();
+});
+document.querySelector('#compose-spellcheck').addEventListener('click', (event) => {
+  const enabled = composeBodyEditor.spellcheck !== false;
+  composeBodyEditor.spellcheck = !enabled;
+  event.currentTarget.classList.toggle('active', !enabled);
+  event.currentTarget.textContent = `Orthographe ${!enabled ? '✓' : '×'}`;
+  composeBodyEditor.focus();
+});
+document.querySelector('#close-signature').addEventListener('click', () => signatureDialog.close());
+document.querySelector('#cancel-signature').addEventListener('click', () => signatureDialog.close());
+signatureForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  signatureError.textContent = 'Enregistrement…';
+  try {
+    const result = await window.gestionMail.saveSignature(selectedAccountId, plainTextToHtml(signatureText.value.trim()));
+    composerData.signature = result.signature;
+    signatureDialog.close();
+    composeError.textContent = 'Signature enregistrée pour ce compte.';
+  } catch (error) {
+    signatureError.textContent = readableError(error);
   }
 });
 
@@ -824,16 +1420,28 @@ for (const target of ['to', 'cc']) {
   });
 }
 
-function openComposer(prefill = {}) {
+async function openComposer(prefill = {}) {
+  suspendDraftAutosave = true;
   const account = accounts.find((item) => item.id === selectedAccountId);
   document.querySelector('#compose-from').textContent = account ? `Depuis ${account.email}` : '';
+  try {
+    composerData = await window.gestionMail.getComposerData(selectedAccountId);
+  } catch {
+    composerData = { signature: '', templates: [] };
+  }
+  renderComposeTemplates();
   resetComposeRecipients(prefill);
   composeForm.elements.subject.value = prefill.subject || '';
-  resetComposeBody(prefill.body || '');
-  composeAttachments = [];
+  resetComposeBody(prefill.body || '', prefill.htmlBody || '');
+  if (!prefill.body && !prefill.htmlBody && !prefill.draftId && composerData.signature) {
+    composeBodyEditor.innerHTML = signatureHtml();
+  }
+  composeAttachments = Array.isArray(prefill.attachments) ? [...prefill.attachments] : [];
+  currentDraftId = prefill.draftId || null;
   renderComposeAttachments();
   composeError.textContent = '';
   composeDialog.showModal();
+  suspendDraftAutosave = false;
 }
 
 function renderAccounts() {
@@ -873,6 +1481,21 @@ function renderAccounts() {
       settingsDialog.close();
       selectAccount(account.id);
     });
+    item.addEventListener('contextmenu', (event) => showContextMenu(event, [
+      { label: 'Ouvrir ce compte', action: () => {
+        settingsDialog.close();
+        return selectAccount(account.id);
+      } },
+      { label: 'Nouveau message avec ce compte', action: async () => {
+        settingsDialog.close();
+        if (selectedAccountId !== account.id) await selectAccount(account.id);
+        await openComposer();
+      } },
+      { label: 'Modifier le compte…', action: () => {
+        settingsDialog.close();
+        openAccountDialog(account);
+      } }
+    ]));
     const edit = document.createElement('button');
     edit.type = 'button';
     edit.className = 'edit-account';
@@ -921,6 +1544,23 @@ function enableFolderDrag(element, folder) {
   });
 }
 
+function showServerFolderContextMenu(event, folder) {
+  const isFavorite = favoritePaths().includes(folder.path);
+  showContextMenu(event, [
+    { label: 'Ouvrir le dossier', action: () => selectFolder(folder.path) },
+    {
+      label: 'Actualiser ce dossier',
+      action: async () => {
+        if (viewingLocal || selectedFolder !== folder.path) await selectFolder(folder.path);
+        await synchroniseCurrentFolder(false);
+      }
+    },
+    { label: isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris', action: () => toggleFavorite(folder.path) },
+    { separator: true },
+    { label: 'Copier le dossier complet en local…', action: () => copyRemoteFolderTree({ accountId: selectedAccountId, path: folder.path, name: folder.name || folder.path }) }
+  ]);
+}
+
 function renderFavorites() {
   favoriteList.replaceChildren();
   const favorites = new Set(favoritePaths());
@@ -939,6 +1579,7 @@ function renderFavorites() {
     item.textContent = `★ ${folder.name || folder.path}`;
     item.title = folder.path;
     item.addEventListener('click', () => selectFolder(folder.path));
+    item.addEventListener('contextmenu', (event) => showServerFolderContextMenu(event, folder));
     enableFolderDrag(item, folder);
     favoriteList.append(item);
   }
@@ -991,6 +1632,7 @@ function appendFolderNodes(container, nodes, depth = 0) {
     item.disabled = node.selectable === false;
     if (node.selectable !== false) {
       item.addEventListener('click', () => selectFolder(node.path));
+      item.addEventListener('contextmenu', (event) => showServerFolderContextMenu(event, node));
       enableFolderDrag(item, node);
     }
     const favorite = document.createElement('button');
@@ -1033,10 +1675,28 @@ function localFolderTree() {
   return roots;
 }
 
+const localFolderColorChoices = [
+  ['', 'Par défaut', '⚪'], ['blue', 'Bleu', '🔵'], ['green', 'Vert', '🟢'],
+  ['yellow', 'Jaune', '🟡'], ['orange', 'Orange', '🟠'], ['red', 'Rouge', '🔴'],
+  ['purple', 'Violet', '🟣'], ['gray', 'Gris', '⚫']
+];
+
+async function changeLocalFolderColor(folder, color) {
+  await window.gestionMail.setLocalFolderColor(folder.id, color);
+  folder.color = color;
+  const stored = localFolders.find((item) => item.id === folder.id);
+  if (stored) stored.color = color;
+  renderLocalFolders();
+  statusLine.textContent = color
+    ? `Couleur du dossier « ${folder.name} » modifiée uniquement dans GestionMail.`
+    : `Couleur du dossier « ${folder.name} » réinitialisée.`;
+}
+
 function appendLocalFolderNodes(container, nodes, depth = 0) {
   for (const folder of nodes) {
     const row = document.createElement('div');
     row.className = 'local-folder-row';
+    row.dataset.color = folder.color || 'default';
     row.style.paddingLeft = `${depth * 14}px`;
     const toggle = document.createElement('button');
     toggle.type = 'button';
@@ -1052,10 +1712,18 @@ function appendLocalFolderNodes(container, nodes, depth = 0) {
     item.type = 'button';
     item.className = `nav-item${viewingLocal && selectedFolder === `local:${folder.id}` ? ' active' : ''}`;
     const name = document.createElement('span');
-    name.textContent = `📁 ${folder.name}`;
+    name.className = 'local-folder-name';
+    const icon = document.createElement('span');
+    icon.className = 'local-folder-icon';
+    const nameText = document.createElement('span');
+    nameText.textContent = folder.name;
+    name.append(icon, nameText);
     const count = document.createElement('span');
     count.className = 'local-count';
-    count.textContent = String(folder.messageCount || 0);
+    const totalMessageCount = (node) => Number(node.messageCount || 0) + node.children.reduce((total, child) => total + totalMessageCount(child), 0);
+    const recursiveCount = totalMessageCount(folder);
+    count.textContent = String(recursiveCount);
+    count.title = folder.children.length ? `${recursiveCount} messages dans ce dossier et ses sous-dossiers` : `${recursiveCount} messages`;
     item.append(name, count);
     item.addEventListener('click', () => selectLocalFolder(folder));
     item.addEventListener('dblclick', async () => {
@@ -1065,6 +1733,28 @@ function appendLocalFolderNodes(container, nodes, depth = 0) {
         statusLine.textContent = `Impossible d’ouvrir le dossier Windows : ${readableError(error)}`;
       }
     });
+    item.addEventListener('contextmenu', (event) => showContextMenu(event, [
+      { label: 'Ouvrir dans GestionMail', action: () => selectLocalFolder(folder) },
+      { label: 'Ouvrir dans l’Explorateur Windows', action: () => window.gestionMail.openLocalFolder(folder.id) },
+      { separator: true },
+      { label: 'Créer un sous-dossier…', action: () => createLocalFolder(folder.id) },
+      {
+        label: 'Déplacer à la racine',
+        disabled: folder.parentId === null,
+        action: async () => {
+          await window.gestionMail.moveLocalFolder(folder.id, null);
+          await loadLocalFolders();
+        }
+      },
+      { separator: true },
+      { label: 'Couleur du dossier', disabled: true },
+      ...localFolderColorChoices.map(([color, label, marker]) => ({
+        label: `${folder.color === color ? '✓ ' : ''}${marker} ${label}`,
+        action: () => changeLocalFolderColor(folder, color)
+      })),
+      { separator: true },
+      { label: 'Supprimer le dossier et son contenu…', danger: true, action: () => deleteLocalFolder(folder) }
+    ]));
     item.title = `${folder.path}\nDouble-cliquez pour ouvrir dans l’Explorateur Windows`;
     item.draggable = true;
     item.addEventListener('dragstart', (event) => {
@@ -1145,6 +1835,33 @@ function renderLocalFolders() {
   appendLocalFolderNodes(localFolderList, localFolderTree());
 }
 
+async function copyRemoteFolderTree(source) {
+  if (folderCopyInProgress) {
+    statusLine.textContent = 'Une copie de dossier est déjà en cours.';
+    return;
+  }
+  folderCopyInProgress = true;
+  showFolderCopyProgress({ label: source.name || source.path, detail: 'Analyse de l’arborescence' });
+  try {
+    statusLine.textContent = `Téléchargement complet de « ${source.name || source.path} » puis copie locale…`;
+    const result = await window.gestionMail.copyRemoteFolderToLocal(
+      source.accountId || selectedAccountId,
+      source.path,
+      source.name || source.path
+    );
+    await loadLocalFolders();
+    collapsedLocalFolders.delete(result.folder.id);
+    renderLocalFolders();
+    const childCount = Math.max(0, Number(result.folderCount || 1) - 1);
+    statusLine.textContent = `Dossier local « ${result.folder.name} » créé — ${result.totalMessages} message${result.totalMessages > 1 ? 's' : ''} copié${result.totalMessages > 1 ? 's' : ''}${childCount ? ` dans ${childCount + 1} dossiers` : ''}.`;
+  } catch (error) {
+    statusLine.textContent = `Échec de la copie du dossier : ${readableError(error)}`;
+  } finally {
+    folderCopyInProgress = false;
+    hideFolderCopyProgress();
+  }
+}
+
 localSidebar.addEventListener('dragover', (event) => {
   const types = Array.from(event.dataTransfer.types);
   if (!types.includes('application/x-gestionmail-folder') && !types.includes('application/x-gestionmail-local-folder')) return;
@@ -1175,32 +1892,68 @@ localSidebar.addEventListener('drop', async (event) => {
   if (!encodedFolder) return;
   event.preventDefault();
   localSidebar.classList.remove('folder-drag-over');
-  if (folderCopyInProgress) {
-    statusLine.textContent = 'Une copie de dossier est déjà en cours.';
-    return;
-  }
-  folderCopyInProgress = true;
-  showFolderCopyProgress({ label: 'Copie en cours…', detail: 'Analyse de l’arborescence' });
   try {
     const source = JSON.parse(encodedFolder);
-    statusLine.textContent = `Téléchargement complet de « ${source.name} » puis copie locale…`;
-    const result = await window.gestionMail.copyRemoteFolderToLocal(
-      source.accountId,
-      source.path,
-      source.name
-    );
-    await loadLocalFolders();
-    collapsedLocalFolders.delete(result.folder.id);
-    renderLocalFolders();
-    const childCount = Math.max(0, Number(result.folderCount || 1) - 1);
-    statusLine.textContent = `Dossier local « ${result.folder.name} » créé — ${result.totalMessages} message${result.totalMessages > 1 ? 's' : ''} copié${result.totalMessages > 1 ? 's' : ''}${childCount ? ` dans ${childCount + 1} dossiers` : ''}.`;
+    await copyRemoteFolderTree(source);
   } catch (error) {
     statusLine.textContent = `Échec de la copie du dossier : ${readableError(error)}`;
-  } finally {
-    folderCopyInProgress = false;
-    hideFolderCopyProgress();
   }
 });
+
+document.querySelector('#cancel-folder-copy').addEventListener('click', async () => {
+  try {
+    await window.gestionMail.cancelFolderCopy();
+    folderCopyProgressDetail.textContent = 'Annulation demandée…';
+  } catch (error) {
+    statusLine.textContent = `Annulation impossible : ${readableError(error)}`;
+  }
+});
+
+function selectedMessages() {
+  return messages.filter((message) => selectedMessageIds.has(message.id));
+}
+
+function renderBulkTargets() {
+  bulkTarget.replaceChildren();
+  const serverGroup = document.createElement('optgroup');
+  serverGroup.label = 'Déplacer sur le serveur';
+  for (const folder of folders.filter((item) => item.selectable !== false && item.path !== selectedFolder)) {
+    const option = document.createElement('option');
+    option.value = `server:${folder.path}`;
+    option.textContent = folder.name || folder.path;
+    serverGroup.append(option);
+  }
+  const localGroup = document.createElement('optgroup');
+  localGroup.label = 'Copier dans les dossiers locaux';
+  for (const folder of localFolders) {
+    const option = document.createElement('option');
+    option.value = `local:${folder.id}`;
+    option.textContent = folder.name;
+    localGroup.append(option);
+  }
+  if (serverGroup.children.length) bulkTarget.append(serverGroup);
+  if (localGroup.children.length) bulkTarget.append(localGroup);
+}
+
+function updateBulkActions() {
+  const count = selectedMessageIds.size;
+  bulkActions.hidden = count === 0;
+  bulkCount.textContent = `${count} sélectionné${count > 1 ? 's' : ''}`;
+  renderBulkTargets();
+}
+
+function clearMessageSelection() {
+  selectedMessageIds.clear();
+  updateBulkActions();
+  renderMessages(searchInput.value);
+}
+
+async function refreshCurrentMessageList() {
+  if (searchScope.value === 'global' && searchInput.value.trim()) messages = await window.gestionMail.searchMessages(searchInput.value.trim());
+  else if (viewingLocal) messages = await window.gestionMail.listMessages('__local__', selectedFolder);
+  else messages = await window.gestionMail.listMessages(selectedAccountId, selectedFolder);
+  renderMessages(searchInput.value);
+}
 
 function renderMessages(filter = '') {
   const query = filter.trim().toLocaleLowerCase('fr');
@@ -1219,6 +1972,18 @@ function renderMessages(filter = '') {
   }
 
   for (const message of visible) {
+    const wrapper = document.createElement('div');
+    wrapper.className = `message-select-row${selectedMessageIds.has(message.id) ? ' selected' : ''}`;
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = selectedMessageIds.has(message.id);
+    checkbox.setAttribute('aria-label', `Sélectionner ${message.subject || '(Sans objet)'}`);
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) selectedMessageIds.add(message.id);
+      else selectedMessageIds.delete(message.id);
+      wrapper.classList.toggle('selected', checkbox.checked);
+      updateBulkActions();
+    });
     const row = document.createElement('button');
     row.type = 'button';
     row.className = `message-row${message.isRead ? '' : ' unread'}`;
@@ -1257,7 +2022,9 @@ function renderMessages(filter = '') {
         statusLine.textContent = `Impossible d’ouvrir le message seul : ${readableError(error)}`;
       }
     });
-    messageList.append(row);
+    row.addEventListener('contextmenu', (event) => showMessageContextMenu(event, message, row));
+    wrapper.append(checkbox, row);
+    messageList.append(wrapper);
   }
 }
 
@@ -1287,6 +2054,53 @@ async function moveDisplayedMessage(message, destination, label, needsConfirmati
   } catch (error) {
     statusLine.textContent = `Échec : ${readableError(error)}`;
   }
+}
+
+function showMessageContextMenu(event, message, row) {
+  const isLocalMessage = message.accountId === '__local__';
+  const archiveFolder = folders.find((folder) => /archive/i.test(folder.specialUse || '') || /archive/i.test(folder.name || ''));
+  const trashFolder = folders.find((folder) => /trash/i.test(folder.specialUse || '') || /corbeille|trash/i.test(folder.name || ''));
+  showContextMenu(event, [
+    { label: 'Ouvrir le message', action: () => openMessage(message.id, row) },
+    { label: 'Ouvrir dans une nouvelle fenêtre', action: () => window.gestionMail.openMessageWindow(message.id) },
+    { label: message.isRead ? 'Marquer comme non lu' : 'Marquer comme lu', action: async () => {
+      await window.gestionMail.setMessageRead(message.id, !message.isRead);
+      message.isRead = message.isRead ? 0 : 1;
+      renderMessages(searchInput.value);
+    } },
+    {
+      label: selectedMessageIds.has(message.id) ? 'Retirer de la sélection' : 'Ajouter à la sélection',
+      action: () => {
+        if (selectedMessageIds.has(message.id)) selectedMessageIds.delete(message.id);
+        else selectedMessageIds.add(message.id);
+        updateBulkActions();
+        renderMessages(searchInput.value);
+      }
+    },
+    { separator: true },
+    { label: 'Conserver une copie en local…', hidden: isLocalMessage, action: () => openCopyLocalDialog(message) },
+    { label: 'Archiver', hidden: isLocalMessage, disabled: !archiveFolder || archiveFolder.path === selectedFolder, action: () => moveDisplayedMessage(message, archiveFolder?.path, 'Archivé') },
+    { label: 'Placer dans la corbeille…', hidden: isLocalMessage, disabled: !trashFolder || trashFolder.path === selectedFolder, danger: true, action: () => moveDisplayedMessage(message, trashFolder?.path, 'Déplacé dans la corbeille', true) },
+    {
+      label: 'Ouvrir son dossier Windows',
+      hidden: !isLocalMessage,
+      action: () => window.gestionMail.openLocalFolder(Number(String(message.folder).replace('local:', '')))
+    },
+    {
+      label: 'Supprimer la copie locale…',
+      hidden: !isLocalMessage,
+      danger: true,
+      action: async () => {
+        if (!window.confirm(`Supprimer définitivement « ${message.subject || '(Sans objet)'} » de ce dossier local ?`)) return;
+        await window.gestionMail.deleteLocalMessage(message.id);
+        messages = messages.filter((item) => item.id !== message.id);
+        selectedMessageIds.delete(message.id);
+        updateBulkActions();
+        renderMessages(searchInput.value);
+        resetMessageContent('La copie locale a été supprimée.');
+      }
+    }
+  ]);
 }
 
 async function selectAccount(accountId) {
@@ -1332,6 +2146,7 @@ async function openSettingsDialog() {
     currentSettings = await window.gestionMail.getSettings();
     renderAccounts();
     settingsForm.elements.autoSyncMinutes.value = String(currentSettings.autoSyncMinutes);
+    settingsForm.elements.fontSize.value = String(currentSettings.fontSize);
     settingsForm.elements.notificationsEnabled.checked = Boolean(currentSettings.notificationsEnabled);
     settingsForm.elements.dataDirectory.value = currentSettings.dataDirectory;
     settingsError.textContent = '';
@@ -1363,7 +2178,7 @@ async function synchroniseCurrentFolder(automatic = false) {
         : `${newMessages.length} nouveaux messages dans ${syncingFolder}`;
       await window.gestionMail.showNotification('Nouveau message', body);
     }
-    statusLine.textContent = `${result.imported} message${result.imported > 1 ? 's' : ''} vérifié${result.imported > 1 ? 's' : ''} — ${result.total} sur le serveur${automatic ? ' — actualisation automatique' : ''}`;
+    statusLine.textContent = `${result.imported} message${result.imported > 1 ? 's' : ''} vérifié${result.imported > 1 ? 's' : ''} — ${result.total} sur le serveur${result.sorted ? ` — ${result.sorted} trié${result.sorted > 1 ? 's' : ''} automatiquement` : ''}${automatic ? ' — actualisation automatique' : ''}`;
   } catch (error) {
     statusLine.textContent = `Échec${automatic ? ' de l’actualisation automatique' : ''} : ${readableError(error)}`;
   } finally {
@@ -1374,6 +2189,8 @@ async function synchroniseCurrentFolder(automatic = false) {
 }
 
 async function selectFolder(folderPath, updateStatus = true) {
+  selectedMessageIds.clear();
+  updateBulkActions();
   viewingLocal = false;
   selectedFolder = folderPath;
   if (selectedAccountId) {
@@ -1400,6 +2217,8 @@ async function loadLocalFolders() {
 }
 
 async function selectLocalFolder(folder) {
+  selectedMessageIds.clear();
+  updateBulkActions();
   viewingLocal = true;
   selectedFolder = `local:${folder.id}`;
   renderFolders();
@@ -1437,7 +2256,7 @@ async function deleteLocalFolder(folder) {
   );
   if (!confirmed) return;
   try {
-    await window.gestionMail.deleteLocalFolder(folder.id);
+    await window.gestionMail.deleteLocalFolderTree(folder.id);
     if (viewingLocal && selectedFolder === `local:${folder.id}`) {
       viewingLocal = false;
       messages = [];
@@ -1793,14 +2612,28 @@ autoSyncSelect.addEventListener('change', async () => {
 });
 
 composeButton.addEventListener('click', () => openComposer());
-document.querySelector('#close-compose').addEventListener('click', () => composeDialog.close());
-document.querySelector('#cancel-compose').addEventListener('click', () => {
+composeForm.addEventListener('input', queueDraftSave);
+document.querySelector('#close-compose').addEventListener('click', async () => {
+  clearTimeout(draftSaveTimer);
+  try {
+    await saveCurrentDraft();
+    composeDialog.close();
+    if (currentDraftId) statusLine.textContent = 'Brouillon enregistré.';
+  } catch (error) {
+    composeError.textContent = `Impossible d’enregistrer le brouillon : ${readableError(error)}`;
+  }
+});
+document.querySelector('#cancel-compose').addEventListener('click', async () => {
+  clearTimeout(draftSaveTimer);
+  if (currentDraftId) await window.gestionMail.deleteDraft(currentDraftId).catch(() => undefined);
+  currentDraftId = null;
   composeForm.reset();
   resetComposeRecipients();
   resetComposeBody();
   composeAttachments = [];
   renderComposeAttachments();
   composeDialog.close();
+  await loadDrafts().catch(() => undefined);
 });
 document.querySelector('#choose-attachments').addEventListener('click', async () => {
   try {
@@ -1809,6 +2642,7 @@ document.querySelector('#choose-attachments').addEventListener('click', async ()
       if (!composeAttachments.some((item) => item.path === attachment.path)) composeAttachments.push(attachment);
     }
     renderComposeAttachments();
+    queueDraftSave();
   } catch (error) {
     composeError.textContent = readableError(error);
   }
@@ -1866,9 +2700,119 @@ localFolderForm.addEventListener('submit', async (event) => {
 });
 
 document.querySelector('#settings-button').addEventListener('click', openSettingsDialog);
+document.querySelector('#drafts-button').addEventListener('click', async () => {
+  try {
+    await loadDrafts();
+    draftError.textContent = '';
+    draftsDialog.showModal();
+    renderDrafts();
+  } catch (error) {
+    statusLine.textContent = `Impossible d’ouvrir les brouillons : ${readableError(error)}`;
+  }
+});
+document.querySelector('#close-drafts').addEventListener('click', () => draftsDialog.close());
+document.querySelector('#open-rules').addEventListener('click', () => openRulesDialog().catch((error) => {
+  settingsError.textContent = readableError(error);
+}));
+document.querySelector('#close-rules').addEventListener('click', () => rulesDialog.close());
+document.querySelector('#reset-rule').addEventListener('click', resetRuleForm);
+ruleTargetType.addEventListener('change', renderRuleTargets);
+ruleAccount.addEventListener('change', async () => {
+  try {
+    ruleServerFolders = ruleAccount.value === selectedAccountId ? folders : await window.gestionMail.listFolders(ruleAccount.value);
+    renderRuleTargets();
+  } catch (error) {
+    ruleError.textContent = readableError(error);
+  }
+});
+ruleForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  ruleError.textContent = 'Enregistrement…';
+  try {
+    const values = Object.fromEntries(new FormData(ruleForm).entries());
+    values.enabled = ruleForm.elements.enabled.checked;
+    const saved = await window.gestionMail.saveMailRule(values);
+    const index = mailRules.findIndex((rule) => rule.id === saved.id);
+    if (index >= 0) mailRules[index] = saved;
+    else mailRules.push(saved);
+    resetRuleForm();
+    renderRules();
+    ruleError.textContent = 'Règle enregistrée. Elle sera appliquée à la prochaine relève.';
+  } catch (error) {
+    ruleError.textContent = readableError(error);
+  }
+});
+document.querySelector('#todo-button').addEventListener('click', async () => {
+  try {
+    await loadTodos();
+    todoError.textContent = '';
+    todoDialog.showModal();
+    renderTodos();
+  } catch (error) {
+    statusLine.textContent = `Impossible d’ouvrir la TODO : ${readableError(error)}`;
+  }
+});
+document.querySelector('#close-todo').addEventListener('click', () => todoDialog.close());
+document.querySelectorAll('[data-todo-filter]').forEach((button) => {
+  button.addEventListener('click', () => {
+    todoFilter = button.dataset.todoFilter;
+    document.querySelectorAll('[data-todo-filter]').forEach((item) => item.classList.toggle('active', item === button));
+    renderTodos();
+  });
+});
+todoForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  todoError.textContent = '';
+  try {
+    const saved = await window.gestionMail.saveTodo(Object.fromEntries(new FormData(todoForm).entries()));
+    todos.push(saved);
+    todoForm.reset();
+    todoForm.elements.category.value = 'Général';
+    todoForm.elements.priority.value = 'normal';
+    updateTodoCount();
+    renderTodos();
+    todoForm.elements.title.focus();
+  } catch (error) {
+    todoError.textContent = readableError(error);
+  }
+});
 document.querySelector('#contacts-button').addEventListener('click', openContactsDialog);
 document.querySelector('#close-contacts').addEventListener('click', () => contactsDialog.close());
 document.querySelector('#new-contact').addEventListener('click', resetContactForm);
+document.querySelector('#import-contacts').addEventListener('click', async () => {
+  contactError.textContent = 'Import en cours…';
+  try {
+    const result = await window.gestionMail.importContacts();
+    if (!result.imported) { contactError.textContent = ''; return; }
+    await loadContacts();
+    renderContacts(contactSearch.value);
+    contactError.textContent = `${result.count} contact(s) importé(s) ou actualisé(s).`;
+  } catch (error) {
+    contactError.textContent = readableError(error);
+  }
+});
+document.querySelector('#export-contacts').addEventListener('click', async () => {
+  contactError.textContent = 'Export en cours…';
+  try {
+    const format = document.querySelector('#contact-export-format').value;
+    const result = await window.gestionMail.exportContacts(format);
+    contactError.textContent = result.exported ? `${result.count} contact(s) exporté(s).` : '';
+  } catch (error) {
+    contactError.textContent = readableError(error);
+  }
+});
+document.querySelector('#merge-contacts').addEventListener('click', async () => {
+  if (!window.confirm('Fusionner les contacts ayant la même adresse e-mail ? Les groupes seront conservés.')) return;
+  contactError.textContent = 'Fusion en cours…';
+  try {
+    const result = await window.gestionMail.mergeDuplicateContacts();
+    await loadContacts();
+    renderContacts(contactSearch.value);
+    contactError.textContent = result.merged ? `${result.merged} doublon(s) fusionné(s).` : 'Aucun doublon trouvé.';
+  } catch (error) {
+    contactError.textContent = readableError(error);
+  }
+});
 createContactGroupButton.addEventListener('click', async () => {
   if (selectedContactIds.size < 2) return;
   openContactGroupDialog([...selectedContactIds]);
@@ -1893,16 +2837,17 @@ contactGroupForm.addEventListener('submit', async (event) => {
   }
   const submitButton = contactGroupForm.querySelector('button[type="submit"]');
   submitButton.disabled = true;
-  contactGroupError.textContent = 'Création en cours…';
+  contactGroupError.textContent = pendingGroupId ? 'Modification en cours…' : 'Création en cours…';
   try {
     const memberCount = pendingGroupContactIds.length;
     const createdMessage = contactGroupCreatedMessage;
-    await window.gestionMail.saveContactGroup(name, pendingGroupContactIds);
+    const editedGroupId = pendingGroupId;
+    await window.gestionMail.saveContactGroup(name, pendingGroupContactIds, editedGroupId);
     selectedContactIds.clear();
     await loadContacts();
     renderContacts(contactSearch.value, contactForm.elements.id.value);
     closeContactGroupDialog();
-    const message = createdMessage || `Groupe « ${name} » créé avec ${memberCount} contacts.`;
+    const message = createdMessage || `Groupe « ${name} » ${editedGroupId ? 'modifié' : 'créé'} avec ${memberCount} contacts.`;
     contactError.textContent = message;
     statusLine.textContent = message;
   } catch (error) {
@@ -1994,11 +2939,13 @@ settingsForm.addEventListener('submit', async (event) => {
   try {
     const values = {
       autoSyncMinutes: Number(settingsForm.elements.autoSyncMinutes.value),
+      fontSize: Number(settingsForm.elements.fontSize.value),
       notificationsEnabled: settingsForm.elements.notificationsEnabled.checked,
       dataDirectory: settingsForm.elements.dataDirectory.value
     };
     const result = await window.gestionMail.saveSettings(values);
     currentSettings = result.settings;
+    applyInterfaceFontSize(currentSettings.fontSize);
     autoSyncSelect.value = String(currentSettings.autoSyncMinutes);
     configureAutoSync();
     await loadLocalFolders();
@@ -2041,13 +2988,16 @@ composeForm.addEventListener('submit', async (event) => {
     const message = Object.fromEntries(new FormData(composeForm).entries());
     message.attachments = composeAttachments;
     await window.gestionMail.sendMessage(selectedAccountId, message);
+    if (currentDraftId) await window.gestionMail.deleteDraft(currentDraftId);
+    currentDraftId = null;
     composeForm.reset();
     resetComposeRecipients();
     resetComposeBody();
     composeAttachments = [];
     renderComposeAttachments();
+    await Promise.all([loadDrafts(), loadLocalFolders()]);
     composeDialog.close();
-    statusLine.textContent = 'Message envoyé.';
+    statusLine.textContent = 'Message envoyé et copie conservée dans « Envoyés ».';
   } catch (error) {
     composeError.textContent = readableError(error);
   } finally {
@@ -2055,7 +3005,103 @@ composeForm.addEventListener('submit', async (event) => {
   }
 });
 
-searchInput.addEventListener('input', () => renderMessages(searchInput.value));
+async function setSelectedMessagesRead(isRead) {
+  const selected = selectedMessages();
+  for (const message of selected) await window.gestionMail.setMessageRead(message.id, isRead);
+  selectedMessageIds.clear();
+  await refreshCurrentMessageList();
+  updateBulkActions();
+}
+
+document.querySelector('#bulk-read').addEventListener('click', () => setSelectedMessagesRead(true).catch((error) => {
+  statusLine.textContent = readableError(error);
+}));
+document.querySelector('#bulk-unread').addEventListener('click', () => setSelectedMessagesRead(false).catch((error) => {
+  statusLine.textContent = readableError(error);
+}));
+document.querySelector('#bulk-clear').addEventListener('click', clearMessageSelection);
+document.querySelector('#bulk-apply-target').addEventListener('click', async () => {
+  const selected = selectedMessages();
+  if (!selected.length || !bulkTarget.value) return;
+  const separatorIndex = bulkTarget.value.indexOf(':');
+  const targetType = bulkTarget.value.slice(0, separatorIndex);
+  const targetValue = bulkTarget.value.slice(separatorIndex + 1);
+  try {
+    if (targetType === 'local') {
+      for (const message of selected) await window.gestionMail.copyMessageToLocal(message.id, Number(targetValue));
+      statusLine.textContent = `${selected.length} message${selected.length > 1 ? 's' : ''} copié${selected.length > 1 ? 's' : ''} localement.`;
+      await loadLocalFolders();
+    } else {
+      if (selected.some((message) => message.accountId === '__local__' || message.accountId !== selectedAccountId)) {
+        throw new Error('Le déplacement serveur nécessite des messages du compte actuellement ouvert.');
+      }
+      for (const message of selected) await window.gestionMail.moveMessage(message.id, targetValue);
+      statusLine.textContent = `${selected.length} message${selected.length > 1 ? 's' : ''} déplacé${selected.length > 1 ? 's' : ''}.`;
+    }
+    selectedMessageIds.clear();
+    await refreshCurrentMessageList();
+    updateBulkActions();
+  } catch (error) {
+    statusLine.textContent = `Action multiple impossible : ${readableError(error)}`;
+  }
+});
+document.querySelector('#bulk-archive').addEventListener('click', async () => {
+  const archive = folders.find((folder) => /archive/i.test(folder.specialUse || '') || /archive/i.test(folder.name || ''));
+  if (!archive) {
+    statusLine.textContent = 'Aucun dossier d’archives détecté pour ce compte.';
+    return;
+  }
+  bulkTarget.value = `server:${archive.path}`;
+  document.querySelector('#bulk-apply-target').click();
+});
+document.querySelector('#bulk-trash').addEventListener('click', async () => {
+  const selected = selectedMessages();
+  if (!selected.length) return;
+  try {
+    if (selected.every((message) => message.accountId === '__local__')) {
+      if (!window.confirm(`Supprimer définitivement ${selected.length} message${selected.length > 1 ? 's' : ''} local${selected.length > 1 ? 'aux' : ''} ?`)) return;
+      for (const message of selected) await window.gestionMail.deleteLocalMessage(message.id);
+    } else {
+      const trash = folders.find((folder) => /trash/i.test(folder.specialUse || '') || /corbeille|trash/i.test(folder.name || ''));
+      if (!trash) throw new Error('Aucun dossier Corbeille détecté pour ce compte.');
+      for (const message of selected) await window.gestionMail.moveMessage(message.id, trash.path);
+    }
+    selectedMessageIds.clear();
+    await refreshCurrentMessageList();
+    updateBulkActions();
+  } catch (error) {
+    statusLine.textContent = `Suppression impossible : ${readableError(error)}`;
+  }
+});
+
+async function runMessageSearch() {
+  clearTimeout(globalSearchTimer);
+  const query = searchInput.value.trim();
+  if (searchScope.value === 'folder') {
+    renderMessages(query);
+    return;
+  }
+  selectedMessageIds.clear();
+  updateBulkActions();
+  if (!query) {
+    await refreshCurrentMessageList();
+    return;
+  }
+  statusLine.textContent = 'Recherche dans tous les messages…';
+  messages = await window.gestionMail.searchMessages(query);
+  renderMessages('');
+  statusLine.textContent = `${messages.length} résultat${messages.length > 1 ? 's' : ''} dans tous les comptes et dossiers locaux.`;
+}
+
+searchInput.addEventListener('input', () => {
+  clearTimeout(globalSearchTimer);
+  globalSearchTimer = setTimeout(() => runMessageSearch().catch((error) => {
+    statusLine.textContent = `Recherche impossible : ${readableError(error)}`;
+  }), 250);
+});
+searchScope.addEventListener('change', () => runMessageSearch().catch((error) => {
+  statusLine.textContent = `Recherche impossible : ${readableError(error)}`;
+}));
 
 window.addEventListener('focus', async () => {
   try {
@@ -2071,9 +3117,10 @@ window.addEventListener('focus', async () => {
 
 async function initialiseApplication() {
   currentSettings = await window.gestionMail.getSettings();
+  applyInterfaceFontSize(currentSettings.fontSize);
   autoSyncSelect.value = String(currentSettings.autoSyncMinutes);
   configureAutoSync();
-  await Promise.all([loadLocalFolders(), loadContacts(), loadAccounts()]);
+  await Promise.all([loadLocalFolders(), loadContacts(), loadTodos(), loadDrafts(), loadAccounts()]);
 }
 
 initialiseApplication().catch((error) => {

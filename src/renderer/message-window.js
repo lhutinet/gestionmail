@@ -226,7 +226,14 @@ async function loadMessage() {
   }
 }
 
-loadMessage().catch((error) => {
+async function initialiseMessageWindow() {
+  const settings = await window.gestionMail.getSettings();
+  const fontSize = [13, 14, 15, 16, 17].includes(Number(settings.fontSize)) ? Number(settings.fontSize) : 15;
+  document.documentElement.style.setProperty('--ui-font-size', `${fontSize}px`);
+  await loadMessage();
+}
+
+initialiseMessageWindow().catch((error) => {
   container.replaceChildren();
   const failure = document.createElement('div');
   failure.className = 'error';

@@ -15,10 +15,11 @@
         <div id="folder-copy-progress" class="folder-copy-progress" role="status" aria-live="polite" hidden>
           <div class="folder-copy-progress-heading"><span class="progress-spinner" aria-hidden="true"></span><strong id="folder-copy-progress-label">Copie en cours…</strong></div>
           <progress id="folder-copy-progress-bar"></progress>
-          <span id="folder-copy-progress-detail">Préparation des dossiers</span>
+          <div class="folder-copy-progress-footer"><span id="folder-copy-progress-detail">Préparation des dossiers</span><button id="cancel-folder-copy" type="button">Annuler</button></div>
         </div>
         <nav id="local-folder-list" aria-label="Dossiers locaux"><div class="sidebar-empty">Aucun dossier local</div></nav>
         <button id="add-local-folder" class="add-account" type="button">＋ Nouveau dossier</button>
+        <button id="todo-button" class="settings-button todo-button" type="button"><span>✓ TODO</span><span id="todo-count" class="todo-count">0</span></button>
         <button id="contacts-button" class="settings-button contacts-button" type="button">♙ Contacts</button>
         <button id="settings-button" class="settings-button" type="button">⚙ Paramètres</button>
       </aside>
@@ -29,6 +30,7 @@
           <select id="account-selector"><option value="">Choisir un compte</option></select>
         </label>
         <button id="new-message" class="compose" type="button" disabled>＋ Nouveau message</button>
+        <button id="drafts-button" class="nav-item drafts-button" type="button"><span>✎ Brouillons</span><strong id="draft-count">0</strong></button>
         <div class="accounts-title first-title">FAVORIS</div>
         <nav id="favorite-list" aria-label="Dossiers favoris"><div class="sidebar-empty">Aucun favori</div></nav>
         <div class="accounts-title">DOSSIERS DU COMPTE</div>
@@ -55,9 +57,20 @@
               </select>
             </label>
             <button id="sync-button" class="secondary" type="button" disabled>↻ Actualiser</button>
+            <select id="search-scope" class="search-scope" aria-label="Portée de la recherche"><option value="folder">Ce dossier</option><option value="global">Tous les messages</option></select>
             <label class="search"><span>⌕</span><input id="message-search" type="search" placeholder="Rechercher dans les messages" disabled></label>
           </div>
         </header>
+        <div id="bulk-actions" class="bulk-actions" hidden>
+          <strong id="bulk-count">0 sélectionné</strong>
+          <button id="bulk-read" class="secondary" type="button">Marquer lu</button>
+          <button id="bulk-unread" class="secondary" type="button">Marquer non lu</button>
+          <select id="bulk-target" aria-label="Dossier de destination"></select>
+          <button id="bulk-apply-target" class="secondary" type="button">Déplacer / copier</button>
+          <button id="bulk-archive" class="secondary" type="button">Archiver</button>
+          <button id="bulk-trash" class="secondary danger-action" type="button">Corbeille / supprimer</button>
+          <button id="bulk-clear" class="icon-button" type="button" title="Annuler la sélection">×</button>
+        </div>
         <section id="welcome" class="empty-state">
           <div class="mail-illustration">✉</div>
           <h2>Bienvenue dans GestionMail</h2>
@@ -164,6 +177,14 @@
                 <input id="compose-link-url" class="compose-link-url" type="url" placeholder="https://…" aria-label="Adresse du lien">
                 <button id="compose-add-link" type="button" title="Ajouter un lien">Lien</button>
                 <button type="button" data-command="unlink" title="Retirer le lien" aria-label="Retirer le lien">Lien ×</button>
+                <button id="compose-inline-image" type="button" title="Insérer une image dans le message">Image</button>
+                <span class="toolbar-separator"></span>
+                <select id="compose-template" aria-label="Modèle de message" title="Modèle de message"><option value="">Modèles…</option></select>
+                <button id="compose-save-template" type="button" title="Enregistrer le message comme modèle">Modèle +</button>
+                <button id="compose-delete-template" type="button" title="Supprimer le modèle sélectionné">Modèle ×</button>
+                <button id="compose-insert-signature" type="button" title="Insérer la signature du compte">Signature</button>
+                <button id="compose-edit-signature" type="button" title="Modifier la signature du compte">Signature…</button>
+                <button id="compose-spellcheck" class="active" type="button" title="Activer ou désactiver la vérification orthographique">Orthographe ✓</button>
                 <button type="button" data-command="removeFormat" title="Effacer la mise en forme" aria-label="Effacer la mise en forme">Effacer</button>
               </div>
               <div id="compose-body-editor" class="compose-body-editor" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Écrivez votre message…" spellcheck="true"></div>
@@ -178,6 +199,17 @@
         </div>
         <p id="compose-error" class="form-error" role="alert"></p>
         <div class="dialog-actions"><button id="cancel-compose" type="button">Annuler</button><button id="send-message" class="primary" type="submit">Envoyer</button></div>
+      </form>
+    </dialog>
+    <dialog id="signature-dialog" class="small-dialog">
+      <form id="signature-form" method="dialog">
+        <div class="dialog-heading">
+          <div><h2>Signature du compte</h2><p>Cette signature est propre au compte d’envoi sélectionné.</p></div>
+          <button id="close-signature" class="icon-button" type="button" aria-label="Fermer">×</button>
+        </div>
+        <label>Texte de la signature<textarea id="signature-text" rows="8" maxlength="20000" placeholder="Nom, fonction, téléphone…"></textarea></label>
+        <p id="signature-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions"><button id="cancel-signature" type="button">Annuler</button><button class="primary" type="submit">Enregistrer</button></div>
       </form>
     </dialog>
     <datalist id="contact-emails"></datalist>
@@ -212,6 +244,10 @@
         <div class="contacts-toolbar">
           <input id="contact-search" type="search" placeholder="Rechercher un contact">
           <button id="create-contact-group" class="secondary" type="button" disabled>Créer un groupe</button>
+          <button id="import-contacts" class="secondary" type="button">Importer</button>
+          <select id="contact-export-format" aria-label="Format d’export"><option value="csv">CSV</option><option value="vcf">vCard</option></select>
+          <button id="export-contacts" class="secondary" type="button">Exporter</button>
+          <button id="merge-contacts" class="secondary" type="button" title="Fusionner les contacts ayant la même adresse e-mail">Fusionner</button>
           <button id="new-contact" class="secondary" type="button">＋ Nouveau</button>
         </div>
         <div class="contacts-layout">
@@ -237,6 +273,56 @@
             </div>
           </form>
         </div>
+      </div>
+    </dialog>
+    <dialog id="todo-dialog" class="todo-dialog">
+      <div class="todo-panel">
+        <div class="dialog-heading">
+          <div><h2>TODO GestionMail</h2><p>La liste de travail de l’application, enregistrée localement.</p></div>
+          <button id="close-todo" class="icon-button" type="button" aria-label="Fermer">×</button>
+        </div>
+        <form id="todo-form" class="todo-form">
+          <input name="id" type="hidden">
+          <input name="title" maxlength="240" required placeholder="Nouvelle tâche…">
+          <input name="category" maxlength="80" placeholder="Catégorie" value="Général">
+          <select name="priority" aria-label="Priorité"><option value="normal">Normale</option><option value="high">Haute</option><option value="low">Basse</option></select>
+          <button class="primary" type="submit">Ajouter</button>
+        </form>
+        <div class="todo-filters"><button class="secondary active" type="button" data-todo-filter="open">À faire</button><button class="secondary" type="button" data-todo-filter="all">Toutes</button><button class="secondary" type="button" data-todo-filter="done">Terminées</button></div>
+        <div id="todo-list" class="todo-list"></div>
+        <p id="todo-error" class="form-error" role="alert"></p>
+      </div>
+    </dialog>
+    <dialog id="drafts-dialog" class="small-dialog drafts-dialog">
+      <div class="drafts-panel">
+        <div class="dialog-heading">
+          <div><h2>Brouillons</h2><p>Les messages en cours sont enregistrés automatiquement.</p></div>
+          <button id="close-drafts" class="icon-button" type="button" aria-label="Fermer">×</button>
+        </div>
+        <div id="draft-list" class="draft-list"></div>
+        <p id="draft-error" class="form-error" role="alert"></p>
+      </div>
+    </dialog>
+    <dialog id="rules-dialog" class="rules-dialog">
+      <div class="rules-panel">
+        <div class="dialog-heading">
+          <div><h2>Tri automatique</h2><p>Classez les nouveaux messages selon leur expéditeur, destinataire, objet ou contenu.</p></div>
+          <button id="close-rules" class="icon-button" type="button" aria-label="Fermer">×</button>
+        </div>
+        <form id="rule-form" class="rule-form">
+          <input name="id" type="hidden">
+          <label>Nom de la règle<input name="name" maxlength="120" required placeholder="Factures fournisseurs"></label>
+          <label>Compte<select id="rule-account" name="accountId" required></select></label>
+          <label>Champ<select name="matchField"><option value="sender">Expéditeur</option><option value="recipients">Destinataire</option><option value="subject">Objet</option><option value="textBody">Contenu</option></select></label>
+          <label>Condition<select name="matchType"><option value="contains">contient</option><option value="equals">est égal à</option><option value="startsWith">commence par</option><option value="endsWith">se termine par</option></select></label>
+          <label class="rule-match-value">Valeur recherchée<input name="matchValue" required placeholder="@fournisseur.fr"></label>
+          <label>Destination<select id="rule-target-type" name="targetType"><option value="local">Dossier local</option><option value="server">Dossier du compte</option></select></label>
+          <label class="rule-target-value">Dossier<select id="rule-target-value" name="targetValue" required></select></label>
+          <label class="checkbox rule-enabled"><input name="enabled" type="checkbox" checked> Règle active</label>
+          <div class="dialog-actions rule-actions"><button id="reset-rule" type="button">Nouvelle règle</button><button class="primary" type="submit">Enregistrer</button></div>
+        </form>
+        <p id="rule-error" class="form-error" role="alert"></p>
+        <div id="rule-list" class="rule-list"></div>
       </div>
     </dialog>
     <dialog id="recipient-picker-dialog" class="small-dialog recipient-picker-dialog">
@@ -280,6 +366,13 @@
               <option value="30">Toutes les 30 minutes</option>
             </select>
           </label>
+          <label>Taille générale du texte
+            <select name="fontSize">
+              <option value="13">Très petite</option><option value="14">Petite</option>
+              <option value="15">Compacte</option><option value="16">Standard</option>
+              <option value="17">Grande</option>
+            </select>
+          </label>
           <label class="checkbox"><input name="notificationsEnabled" type="checkbox"> Afficher les notifications Windows</label>
           <fieldset>
             <legend>Emplacement des dossiers locaux</legend>
@@ -288,6 +381,11 @@
               <button id="choose-data-directory" class="secondary" type="button">Parcourir…</button>
             </div>
             <small>La base d’index et le répertoire « Dossiers locaux » contenant les fichiers .eml sont conservés ici.</small>
+          </fieldset>
+          <fieldset>
+            <legend>Automatisation</legend>
+            <button id="open-rules" class="secondary" type="button">Gérer le tri automatique…</button>
+            <small>Les règles sont appliquées après chaque relève des nouveaux messages.</small>
           </fieldset>
         </div>
         <p id="settings-error" class="form-error" role="alert"></p>
