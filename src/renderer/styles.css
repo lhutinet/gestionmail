@@ -40,7 +40,19 @@ body.resizing-columns { cursor: col-resize; user-select: none; }
 body.resizing-columns * { cursor: col-resize !important; }
 .local-sidebar { display: flex; flex-direction: column; height: 100vh; padding: 24px 12px; overflow-y: auto; color: #dce6f2; background: #0d1a2b; border-right: 1px solid #2b3d54; }
 .local-sidebar.folder-drag-over { outline: 2px dashed var(--accent-color); outline-offset: -7px; background: #122b3a; }
-.local-sidebar-heading { padding: 6px 8px 4px; color: white; font-size: 15px; font-weight: 700; }
+.local-sidebar-header { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
+.local-sidebar-title { min-width: 0; }
+.local-sidebar-heading { min-width: 0; padding: 6px 8px 4px; overflow: hidden; color: white; font-size: 15px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.local-sidebar-account { padding: 0 8px 5px; overflow: hidden; color: #8091a8; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.local-sidebar-toggle { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; padding: 0; border: 1px solid #30445e; border-radius: 7px; color: #aebed1; background: #16273d; font-size: 20px; line-height: 1; }
+.local-sidebar-toggle:hover { color: white; border-color: var(--accent-color); background: #203750; }
+body.local-sidebar-collapsed .app-shell { grid-template-columns: 44px 0 var(--account-sidebar-width) 5px minmax(0, 1fr); }
+body.local-sidebar-collapsed .local-sidebar { padding: 18px 5px; overflow: hidden; }
+body.local-sidebar-collapsed .local-sidebar-header { justify-content: center; width: 100%; }
+body.local-sidebar-collapsed .local-sidebar-title,
+body.local-sidebar-collapsed .local-sidebar > :not(.local-sidebar-header) { display: none !important; }
+body.local-sidebar-collapsed .local-sidebar-toggle { width: 32px; height: 32px; }
+body.local-sidebar-collapsed .local-sidebar + .column-resizer { width: 0; min-width: 0; overflow: hidden; pointer-events: none; }
 .local-sidebar-help { margin: 4px 8px 18px; color: #8091a8; font-size: 11px; line-height: 1.45; }
 .folder-copy-progress { display: grid; gap: 8px; margin: 0 4px 14px; padding: 11px; border: 1px solid #356078; border-radius: 9px; color: #dce6f2; background: #132b3c; font-size: 11px; }
 .folder-copy-progress-heading { display: flex; min-width: 0; align-items: center; gap: 8px; }
@@ -177,7 +189,11 @@ nav { display: grid; gap: 4px; }
 .message-html img { max-width: 100%; height: auto; }
 .message-html img:not([src]) { display: none; }
 .received-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; padding-top: 18px; border-top: 1px solid #dfe4ea; }
-.attachment-button { padding: 8px 11px; border: 1px solid #ccd5df; border-radius: 8px; color: #344052; background: white; }
+.attachment-item { display: inline-flex; align-items: stretch; }
+.attachment-button, .attachment-save-button { padding: 8px 11px; border: 1px solid #ccd5df; color: #344052; background: white; }
+.attachment-button { border-radius: 8px 0 0 8px; }
+.attachment-save-button { margin-left: -1px; border-radius: 0 8px 8px 0; color: #536173; font-size: 12px; }
+.attachment-button:hover, .attachment-save-button:hover { position: relative; border-color: var(--accent-strong); background: var(--accent-soft); }
 .message-placeholder { display: grid; min-height: 100%; place-items: center; color: #8994a2; }
 .list-empty { padding: 30px 20px; color: #778395; text-align: center; }
 

@@ -41,7 +41,7 @@ async function authorizeOAuth(values) {
       const error = url.searchParams.get('error');
       const code = url.searchParams.get('code');
       response.writeHead(error || !code ? 400 : 200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(error || !code ? '<h1>Connexion annulée</h1><p>Vous pouvez fermer cette fenêtre.</p>' : '<h1>Connexion réussie</h1><p>Vous pouvez fermer cette fenêtre et revenir dans GestionMail.</p>');
+      response.end(error || !code ? '<h1>Connexion annulée</h1><p>Vous pouvez fermer cette fenêtre.</p>' : '<h1>Connexion réussie</h1><p>Vous pouvez fermer cette fenêtre et revenir dans Monmail.</p>');
       if (error || !code) reject(new Error(url.searchParams.get('error_description') || 'Connexion OAuth2 annulée.'));
       else resolve(code);
     });

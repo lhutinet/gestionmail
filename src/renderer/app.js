@@ -7,6 +7,8 @@ const folderList = document.querySelector('#folder-list');
 const favoriteList = document.querySelector('#favorite-list');
 const localFolderList = document.querySelector('#local-folder-list');
 const localSidebar = document.querySelector('.local-sidebar');
+const localSidebarToggle = document.querySelector('#toggle-local-sidebar');
+const localSidebarAccount = document.querySelector('#local-sidebar-account');
 const folderCopyProgress = document.querySelector('#folder-copy-progress');
 const folderCopyProgressLabel = document.querySelector('#folder-copy-progress-label');
 const folderCopyProgressBar = document.querySelector('#folder-copy-progress-bar');
@@ -161,6 +163,7 @@ let currentSettings = {
 };
 const lastAccountStorageKey = 'gestionmail.lastAccountId';
 const columnWidthsStorageKey = 'gestionmail.columnWidths';
+const localSidebarCollapsedStorageKey = 'gestionmail.localSidebarCollapsed';
 const defaultColumnWidths = { local: 190, accounts: 250, messages: 360 };
 let columnWidths = { ...defaultColumnWidths };
 
@@ -318,6 +321,19 @@ function changeColumnWidth(name, value, save = false) {
   if (save) saveColumnWidths();
 }
 
+function setLocalSidebarCollapsed(collapsed, save = false) {
+  document.body.classList.toggle('local-sidebar-collapsed', collapsed);
+  localSidebarToggle.setAttribute('aria-expanded', String(!collapsed));
+  localSidebarToggle.title = collapsed ? 'Afficher le stockage local' : 'Réduire le stockage local';
+  localSidebarToggle.querySelector('span').textContent = collapsed ? '›' : '‹';
+  if (save) localStorage.setItem(localSidebarCollapsedStorageKey, String(collapsed));
+}
+
+setLocalSidebarCollapsed(localStorage.getItem(localSidebarCollapsedStorageKey) === 'true');
+localSidebarToggle.addEventListener('click', () => {
+  setLocalSidebarCollapsed(!document.body.classList.contains('local-sidebar-collapsed'), true);
+});
+
 for (const separator of document.querySelectorAll('[data-column-resize]')) {
   const name = separator.dataset.columnResize;
   separator.addEventListener('pointerdown', (event) => {
@@ -383,6 +399,7 @@ window.gestionMail.onFolderCopyProgress((progress) => {
 });
 
 window.gestionMail.onLocalFoldersRefreshed(async (result) => {
+  if (result?.accountId && result.accountId !== selectedAccountId) return;
   localFolders = Array.isArray(result?.folders) ? result.folders : localFolders;
   renderLocalFolders();
   if (viewingLocal && result?.imported) {
@@ -718,7 +735,7 @@ function openAccountDialog(account = null) {
     ? 'Laissez vide pour conserver le mot de passe actuel.'
     : 'Il sera chiffré avec la protection de votre session Windows.';
   if (account) {
-    for (const field of ['id', 'name', 'email', 'protocol', 'authType', 'oauthProvider', 'oauthClientId', 'oauthTenant', 'incomingHost', 'incomingPort', 'outgoingHost', 'outgoingPort', 'username']) {
+    for (const field of ['id', 'name', 'email', 'localDirectory', 'protocol', 'authType', 'oauthProvider', 'oauthClientId', 'oauthTenant', 'incomingHost', 'incomingPort', 'outgoingHost', 'outgoingPort', 'username']) {
       accountForm.elements[field].value = account[field] ?? '';
     }
     accountForm.elements.incomingSecure.checked = Boolean(account.incomingSecure);
@@ -1805,7 +1822,7 @@ async function changeLocalFolderColor(folder, color) {
   if (stored) stored.color = color;
   renderLocalFolders();
   statusLine.textContent = color
-    ? `Couleur du dossier « ${folder.name} » modifiée uniquement dans GestionMail.`
+    ? `Couleur du dossier « ${folder.name} » modifiée uniquement dans Monmail.`
     : `Couleur du dossier « ${folder.name} » réinitialisée.`;
 }
 
@@ -1851,7 +1868,7 @@ function appendLocalFolderNodes(container, nodes, depth = 0) {
       }
     });
     item.addEventListener('contextmenu', (event) => showContextMenu(event, [
-      { label: 'Ouvrir dans GestionMail', action: () => selectLocalFolder(folder) },
+      { label: 'Ouvrir dans Monmail', action: () => selectLocalFolder(folder) },
       { label: 'Ouvrir dans l’Explorateur Windows', action: () => window.gestionMail.openLocalFolder(folder.id) },
       { separator: true },
       { label: 'Renommer…', action: async () => {
@@ -1962,6 +1979,9 @@ function appendLocalFolderNodes(container, nodes, depth = 0) {
 }
 
 function renderLocalFolders() {
+  const account = accounts.find((item) => item.id === selectedAccountId);
+  localSidebarAccount.textContent = account?.email || 'Aucun compte';
+  localSidebarAccount.title = account?.email || '';
   localFolderList.replaceChildren();
   if (!localFolders.length) {
     const empty = document.createElement('div');
@@ -2292,6 +2312,7 @@ async function selectAccount(accountId) {
     selectedFolder = folders.find((folder) => folder.selectable !== false)?.path || 'INBOX';
   }
   renderFolders();
+  await loadLocalFolders();
   await selectFolder(selectedFolder, false);
   statusLine.textContent = `Messages locaux affichés — actualisation différée des dossiers de ${account?.email || ''}…`;
   setTimeout(async () => {
@@ -2330,7 +2351,6 @@ async function openSettingsDialog() {
     settingsForm.elements.minimizeToTray.checked = Boolean(currentSettings.minimizeToTray);
     settingsForm.elements.groupConversations.checked = currentSettings.groupConversations !== false;
     settingsForm.elements.autoUpdateEnabled.checked = currentSettings.autoUpdateEnabled !== false;
-    settingsForm.elements.dataDirectory.value = currentSettings.dataDirectory;
     const metrics = await window.gestionMail.getStartupPerformance();
     document.querySelector('#startup-performance').textContent = metrics.windowReadyMs === null
       ? 'Mesure du démarrage en cours…'
@@ -2398,7 +2418,15 @@ async function selectFolder(folderPath, updateStatus = true) {
 }
 
 async function loadLocalFolders() {
-  localFolders = await window.gestionMail.listLocalFolders();
+  const accountId = selectedAccountId;
+  if (!accountId) {
+    localFolders = [];
+    renderLocalFolders();
+    return;
+  }
+  const foldersForAccount = await window.gestionMail.listLocalFolders(accountId);
+  if (selectedAccountId !== accountId) return;
+  localFolders = foldersForAccount;
   renderLocalFolders();
 }
 
@@ -2421,6 +2449,10 @@ async function selectLocalFolder(folder) {
 }
 
 function createLocalFolder(parentId = null) {
+  if (!selectedAccountId) {
+    statusLine.textContent = 'Sélectionnez un compte avant de créer un dossier local.';
+    return Promise.resolve(null);
+  }
   if (localFolderDialog.open) return Promise.resolve(null);
   localFolderParentId = parentId === null ? null : Number(parentId);
   localFolderForm.reset();
@@ -2661,11 +2693,28 @@ async function openMessage(messageId, row) {
       const attachments = document.createElement('div');
       attachments.className = 'received-attachments';
       for (const attachment of message.attachments) {
+        const item = document.createElement('div');
+        item.className = 'attachment-item';
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'attachment-button';
         button.textContent = `📎 ${attachment.filename} (${formatSize(attachment.size)})`;
+        button.title = 'Ouvrir avec l’application Windows par défaut';
         button.addEventListener('click', async () => {
+          try {
+            statusLine.textContent = `Ouverture de ${attachment.filename}…`;
+            await window.gestionMail.openAttachment(message.id, attachment.attachmentIndex);
+            statusLine.textContent = `Pièce jointe ouverte : ${attachment.filename}`;
+          } catch (error) {
+            statusLine.textContent = `Échec : ${readableError(error)}`;
+          }
+        });
+        const save = document.createElement('button');
+        save.type = 'button';
+        save.className = 'attachment-save-button';
+        save.textContent = 'Enregistrer';
+        save.title = 'Enregistrer la pièce jointe dans un dossier';
+        save.addEventListener('click', async () => {
           try {
             const result = await window.gestionMail.saveAttachment(message.id, attachment.attachmentIndex);
             if (result.saved) statusLine.textContent = `Pièce jointe enregistrée : ${result.path}`;
@@ -2673,7 +2722,8 @@ async function openMessage(messageId, row) {
             statusLine.textContent = `Échec : ${readableError(error)}`;
           }
         });
-        attachments.append(button);
+        item.append(button, save);
+        attachments.append(item);
       }
       messageContent.append(attachments);
     }
@@ -2711,6 +2761,14 @@ document.querySelector('#add-account').addEventListener('click', () => {
   openAccountDialog();
 });
 document.querySelector('#empty-add-account').addEventListener('click', () => openAccountDialog());
+document.querySelector('#choose-account-local-directory').addEventListener('click', async () => {
+  try {
+    const directory = await window.gestionMail.chooseAccountLocalDirectory(accountForm.elements.localDirectory.value);
+    if (directory) accountForm.elements.localDirectory.value = directory;
+  } catch (error) {
+    accountError.textContent = readableError(error);
+  }
+});
 accountSelector.addEventListener('change', () => {
   if (accountSelector.value) selectAccount(accountSelector.value);
 });
@@ -2770,7 +2828,7 @@ deleteAccountButton.addEventListener('click', async () => {
   const account = accounts.find((item) => item.id === accountId);
   if (!account) return;
   const confirmed = window.confirm(
-    `Supprimer ${account.email} de GestionMail ?\n\nLes copies locales seront supprimées, mais aucun message ne sera supprimé du serveur.`
+    `Supprimer ${account.email} de Monmail ?\n\nLes copies locales seront supprimées, mais aucun message ne sera supprimé du serveur.`
   );
   if (!confirmed) return;
   deleteAccountButton.disabled = true;
@@ -2890,7 +2948,7 @@ localFolderForm.addEventListener('submit', async (event) => {
   localFolderError.textContent = 'Création en cours…';
   try {
     const parentId = localFolderParentId;
-    const folder = await window.gestionMail.createLocalFolder(localFolderName.value, parentId);
+    const folder = await window.gestionMail.createLocalFolder(selectedAccountId, localFolderName.value, parentId);
     if (parentId !== null) collapsedLocalFolders.delete(parentId);
     await loadLocalFolders();
     const resolver = localFolderResolver;
@@ -3131,14 +3189,6 @@ document.querySelector('#close-settings').addEventListener('click', () => settin
 document.querySelector('#cancel-settings').addEventListener('click', () => settingsDialog.close());
 settingsForm.elements.interfaceColor.addEventListener('input', (event) => applyInterfaceColor(event.target.value));
 settingsDialog.addEventListener('close', () => applyInterfaceColor(currentSettings.interfaceColor));
-document.querySelector('#choose-data-directory').addEventListener('click', async () => {
-  try {
-    const directory = await window.gestionMail.chooseDataDirectory();
-    if (directory) settingsForm.elements.dataDirectory.value = directory;
-  } catch (error) {
-    settingsError.textContent = readableError(error);
-  }
-});
 settingsForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   settingsError.textContent = 'Enregistrement des paramètres…';
@@ -3151,8 +3201,7 @@ settingsForm.addEventListener('submit', async (event) => {
       notificationsEnabled: settingsForm.elements.notificationsEnabled.checked,
       minimizeToTray: settingsForm.elements.minimizeToTray.checked,
       groupConversations: settingsForm.elements.groupConversations.checked,
-      autoUpdateEnabled: settingsForm.elements.autoUpdateEnabled.checked,
-      dataDirectory: settingsForm.elements.dataDirectory.value
+      autoUpdateEnabled: settingsForm.elements.autoUpdateEnabled.checked
     };
     const result = await window.gestionMail.saveSettings(values);
     currentSettings = result.settings;
@@ -3187,7 +3236,7 @@ document.querySelector('#create-backup').addEventListener('click', async () => {
 });
 
 document.querySelector('#restore-backup').addEventListener('click', async () => {
-  if (!window.confirm('Restaurer une sauvegarde complète ? GestionMail redémarrera et conservera une copie des données actuelles.')) return;
+  if (!window.confirm('Restaurer une sauvegarde complète ? Monmail redémarrera et conservera une copie des données actuelles.')) return;
   settingsError.textContent = 'Sélection de la sauvegarde à restaurer…';
   try {
     const result = await window.gestionMail.restoreBackup();
@@ -3212,7 +3261,7 @@ document.querySelector('#download-update').addEventListener('click', async () =>
   catch (error) { showUpdateStatus({ state: 'error', message: readableError(error) }); }
 });
 document.querySelector('#install-update').addEventListener('click', async () => {
-  if (!window.confirm('Installer la mise à jour téléchargée et redémarrer GestionMail ?')) return;
+  if (!window.confirm('Installer la mise à jour téléchargée et redémarrer Monmail ?')) return;
   try { await window.gestionMail.installUpdate(); }
   catch (error) { showUpdateStatus({ state: 'error', message: readableError(error) }); }
 });
@@ -3231,6 +3280,11 @@ composeForm.addEventListener('submit', async (event) => {
   if (!bodyText.trim()) {
     composeError.textContent = 'Écrivez le contenu du message.';
     composeBodyEditor.focus();
+    return;
+  }
+  if (!composeForm.elements.subject.value.trim() && !window.confirm('Ce message n’a pas d’objet. Voulez-vous vraiment l’envoyer sans objet ?')) {
+    composeError.textContent = 'Envoi annulé : vous pouvez ajouter un objet.';
+    composeForm.elements.subject.focus();
     return;
   }
   sendButton.disabled = true;

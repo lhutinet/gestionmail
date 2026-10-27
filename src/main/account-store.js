@@ -2,6 +2,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { app, safeStorage } = require('electron');
+const { getSettings } = require('./settings-store');
+
+function defaultLocalDirectory(email) {
+  const safeEmail = String(email || 'Compte local').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/g, '').trim() || 'Compte local';
+  return path.join(getSettings().dataDirectory, 'Dossiers locaux', safeEmail);
+}
 
 function getStorePath() {
   return path.join(app.getPath('userData'), 'accounts.json');
@@ -22,7 +28,7 @@ function readAccounts() {
 
 function publicAccount(account) {
   const { encryptedPassword, encryptedRefreshToken, encryptedAccessToken, ...safeAccount } = account;
-  return safeAccount;
+  return { ...safeAccount, localDirectory: safeAccount.localDirectory || defaultLocalDirectory(safeAccount.email) };
 }
 
 function listAccounts() {
@@ -97,6 +103,13 @@ function validateAccount(candidate, { requirePassword = true } = {}) {
   if (!/^\S+@\S+\.\S+$/.test(candidate.email)) {
     throw new Error('L’adresse e-mail est invalide.');
   }
+  if (candidate.localDirectory && !path.isAbsolute(String(candidate.localDirectory))) {
+    throw new Error('Le dossier local Windows doit utiliser un chemin complet.');
+  }
+  if (candidate.localDirectory) {
+    const resolvedDirectory = path.resolve(String(candidate.localDirectory));
+    if (resolvedDirectory === path.parse(resolvedDirectory).root) throw new Error('Choisissez un dossier dédié, pas la racine complète d’un disque.');
+  }
 
   for (const field of ['incomingPort', 'outgoingPort']) {
     const port = Number(candidate[field]);
@@ -139,6 +152,7 @@ async function saveAccount(candidate) {
     outgoingPort: Number(candidate.outgoingPort),
     outgoingSecure: Boolean(candidate.outgoingSecure),
     username: candidate.username.trim(),
+    localDirectory: path.resolve(String(candidate.localDirectory || existing?.localDirectory || defaultLocalDirectory(candidate.email))),
     authType,
     oauthProvider: authType === 'oauth2' && candidate.oauthProvider === 'microsoft' ? 'microsoft' : authType === 'oauth2' ? 'google' : '',
     oauthClientId: authType === 'oauth2' ? String(candidate.oauthClientId || '').trim() : '',
@@ -156,6 +170,7 @@ async function saveAccount(candidate) {
   else accounts.push(account);
 
   const storePath = getStorePath();
+  fs.mkdirSync(account.localDirectory, { recursive: true });
   fs.mkdirSync(path.dirname(storePath), { recursive: true });
   fs.writeFileSync(storePath, JSON.stringify(accounts, null, 2), { encoding: 'utf8', mode: 0o600 });
   return publicAccount(account);

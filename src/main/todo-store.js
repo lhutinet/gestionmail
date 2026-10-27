@@ -52,7 +52,7 @@ function writeTodos(todos) {
   fs.renameSync(temporaryPath, paths.json);
   const open = todos.filter((todo) => !todo.done).length;
   const lines = [
-    '# TODO GestionMail', '',
+    '# TODO Monmail', '',
     `Total : ${todos.length} — Ouvertes : ${open} — Terminées : ${todos.length - open}`, ''
   ];
   for (const todo of todos) {

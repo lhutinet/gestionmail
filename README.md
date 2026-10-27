@@ -1,4 +1,4 @@
-# GestionMail
+# Monmail
 
 Client de messagerie Windows indépendant, orienté stockage local et simplicité.
 
@@ -33,6 +33,7 @@ La version actuelle permet également :
 - d'organiser les dossiers IMAP sous forme d'arborescence repliable ;
 - d'épingler des dossiers serveur dans une zone Favoris propre à chaque compte ;
 - de créer des dossiers locaux et d'y copier indépendamment messages et pièces jointes.
+- de choisir, dans chaque fiche de compte, un dossier Windows distinct pour son arborescence locale ;
 - d'afficher les dossiers locaux dans une bande verticale séparée, à gauche des dossiers serveur ;
 - de glisser-déposer un message directement sur un dossier local pour le conserver.
 - d'ouvrir les paramètres depuis la roue dentée en bas à gauche ;
@@ -59,7 +60,7 @@ La version actuelle permet également :
 - de connecter Gmail et Microsoft en OAuth2 avec PKCE et stockage chiffré des jetons ;
 - de rechercher, télécharger puis installer explicitement les versions publiées sur le dépôt GitHub officiel.
 
-Certains fournisseurs, notamment Gmail et Microsoft, peuvent exiger OAuth2 ou un mot de passe d’application. GestionMail prend désormais en charge OAuth2 pour leurs connexions IMAP et SMTP.
+Certains fournisseurs, notamment Gmail et Microsoft, peuvent exiger OAuth2 ou un mot de passe d’application. Monmail prend désormais en charge OAuth2 pour leurs connexions IMAP et SMTP.
 Pour OAuth2, créez une application de type bureau chez Google Cloud ou Microsoft Entra, puis saisissez son identifiant client dans la fiche du compte. Le retour OAuth utilise une adresse locale temporaire `127.0.0.1` et les jetons sont chiffrés par la protection native de Windows.
 
 ## Sauvegardes

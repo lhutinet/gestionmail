@@ -30,7 +30,8 @@ function uniqueDiskName(database, requestedName, parentDiskName = '') {
   let suffix = 1;
   const existsInDatabase = database.prepare('SELECT 1 FROM local_folders WHERE disk_name = ? COLLATE NOCASE');
   const relativePath = () => parentDiskName ? path.join(parentDiskName, candidate) : candidate;
-  while (existsInDatabase.get(relativePath()) || fs.existsSync(path.join(root, relativePath()))) {
+  const physicalPath = () => path.isAbsolute(relativePath()) ? relativePath() : path.join(root, relativePath());
+  while (existsInDatabase.get(relativePath()) || fs.existsSync(physicalPath())) {
     suffix += 1;
     const ending = ` (${suffix})`;
     candidate = `${base.slice(0, 120 - ending.length)}${ending}`;
@@ -39,6 +40,7 @@ function uniqueDiskName(database, requestedName, parentDiskName = '') {
 }
 
 function folderPathFromDiskName(diskName) {
+  if (path.isAbsolute(String(diskName))) return path.resolve(String(diskName));
   const root = path.resolve(localRootPath());
   const folderPath = path.resolve(root, String(diskName));
   if (!folderPath.startsWith(`${root}${path.sep}`)) throw new Error('Chemin de dossier local invalide.');
@@ -255,6 +257,15 @@ function db() {
   if (!localFolderColumns.some((column) => column.name === 'color')) {
     database.exec("ALTER TABLE local_folders ADD COLUMN color TEXT NOT NULL DEFAULT ''");
   }
+  if (!localFolderColumns.some((column) => column.name === 'owner_account_id')) {
+    database.exec('ALTER TABLE local_folders ADD COLUMN owner_account_id TEXT');
+  }
+  if (!localFolderColumns.some((column) => column.name === 'owner_email')) {
+    database.exec("ALTER TABLE local_folders ADD COLUMN owner_email TEXT NOT NULL DEFAULT ''");
+  }
+  if (!localFolderColumns.some((column) => column.name === 'owner_directory')) {
+    database.exec("ALTER TABLE local_folders ADD COLUMN owner_directory TEXT NOT NULL DEFAULT ''");
+  }
   ensureLocalStorage(database);
   return database;
 }
@@ -272,7 +283,7 @@ function changeDataDirectory(directory) {
   }
   fs.mkdirSync(targetDirectory, { recursive: true });
   if (fs.existsSync(targetPath)) {
-    throw new Error('Cet emplacement contient déjà une base GestionMail. Choisissez un dossier vide.');
+    throw new Error('Cet emplacement contient déjà une base Monmail. Choisissez un dossier vide.');
   }
   if (fs.existsSync(targetLocalRoot)) {
     throw new Error('Cet emplacement contient déjà un dossier « Dossiers locaux ». Choisissez un dossier vide.');
@@ -496,28 +507,19 @@ function deleteDraft(draftId) {
   return { deleted: Boolean(result.changes) };
 }
 
-function ensureSystemLocalFolder(systemType, name) {
+function ensureSystemLocalFolder(account, systemType, name) {
   const database = db();
-  let folder = database.prepare('SELECT id, name, disk_name AS diskName FROM local_folders WHERE system_type = ?').get(String(systemType));
+  prepareLocalFoldersForAccount(database, account.id, account.email, account.localDirectory);
+  let folder = database.prepare('SELECT id, name, disk_name AS diskName FROM local_folders WHERE system_type = ? AND owner_account_id = ?')
+    .get(String(systemType), String(account.id));
   if (folder) return { ...folder, id: Number(folder.id) };
-  let chosenName = String(name).slice(0, 80);
-  let suffix = 1;
-  const nameExists = database.prepare('SELECT 1 FROM local_folders WHERE name = ? COLLATE NOCASE AND parent_id IS NULL');
-  while (nameExists.get(chosenName)) {
-    suffix += 1;
-    const ending = ` (${suffix})`;
-    chosenName = `${String(name).slice(0, 80 - ending.length)}${ending}`;
-  }
-  const diskName = uniqueDiskName(database, chosenName);
-  const directory = folderPathFromDiskName(diskName);
-  fs.mkdirSync(directory, { recursive: false });
-  const result = database.prepare('INSERT INTO local_folders (name, parent_id, disk_name, system_type, created_at) VALUES (?, NULL, ?, ?, ?)')
-    .run(chosenName, diskName, String(systemType), new Date().toISOString());
-  return { id: Number(result.lastInsertRowid), name: chosenName, diskName };
+  folder = createLocalFolder(String(name).slice(0, 80), null, account.id, account.email, account.localDirectory);
+  database.prepare('UPDATE local_folders SET system_type = ? WHERE id = ?').run(String(systemType), folder.id);
+  return folder;
 }
 
 function storeSentMessage(account, message) {
-  const folder = ensureSystemLocalFolder('sent', 'Envoyés');
+  const folder = ensureSystemLocalFolder(account, 'sent', 'Envoyés');
   const attachments = [];
   for (const candidate of Array.isArray(message.attachments) ? message.attachments : []) {
     if (!candidate?.path || !fs.existsSync(candidate.path)) continue;
@@ -737,16 +739,90 @@ function removeLocalMessage(id) {
   }
 }
 
-function listLocalFolders() {
+function moveDirectory(source, target) {
+  try {
+    fs.renameSync(source, target);
+  } catch (error) {
+    if (error.code !== 'EXDEV') throw error;
+    fs.cpSync(source, target, { recursive: true, errorOnExist: true });
+    fs.rmSync(source, { recursive: true, force: true });
+  }
+}
+
+function prepareLocalFoldersForAccount(database, accountId, accountEmail, accountDirectory = '') {
+  const ownerAccountId = String(accountId || '').trim();
+  const ownerEmail = String(accountEmail || ownerAccountId || 'Compte local').trim();
+  const ownerDirectory = path.resolve(String(accountDirectory || path.join(localRootPath(), safeWindowsSegment(ownerEmail, 'Compte local'))));
+  if (!ownerAccountId) return;
+  database.prepare(`
+    UPDATE local_folders
+       SET owner_account_id = ?, owner_email = ?, owner_directory = ?
+     WHERE source_account_id = ? AND (owner_account_id IS NULL OR owner_account_id = '')
+  `).run(ownerAccountId, ownerEmail, ownerDirectory, ownerAccountId);
+  database.prepare(`
+    UPDATE local_folders
+       SET owner_account_id = ?, owner_email = ?, owner_directory = ?
+     WHERE parent_id IS NULL AND source_account_id IS NULL
+       AND (owner_account_id IS NULL OR owner_account_id = '')
+  `).run(ownerAccountId, ownerEmail, ownerDirectory);
+  let propagated = 1;
+  while (propagated) {
+    propagated = database.prepare(`
+      UPDATE local_folders
+         SET owner_account_id = ?, owner_email = ?, owner_directory = ?
+       WHERE (owner_account_id IS NULL OR owner_account_id = '')
+         AND parent_id IN (SELECT id FROM local_folders WHERE owner_account_id = ?)
+    `).run(ownerAccountId, ownerEmail, ownerDirectory, ownerAccountId).changes;
+  }
+  database.prepare('UPDATE local_folders SET owner_email = ?, owner_directory = ? WHERE owner_account_id = ?')
+    .run(ownerEmail, ownerDirectory, ownerAccountId);
+
+  fs.mkdirSync(ownerDirectory, { recursive: true });
+  const folders = database.prepare(`
+    SELECT id, parent_id AS parentId, disk_name AS diskName
+      FROM local_folders WHERE owner_account_id = ? ORDER BY id
+  `).all(ownerAccountId);
+  for (const rootFolder of folders.filter((folder) => folder.parentId === null)) {
+    const currentDiskName = String(rootFolder.diskName || '');
+    const sourceDirectory = folderPathFromDiskName(currentDiskName);
+    if (sourceDirectory.toLocaleLowerCase('en').startsWith(`${ownerDirectory}${path.sep}`.toLocaleLowerCase('en'))) continue;
+    const targetDiskName = uniqueDiskName(database, path.basename(currentDiskName) || 'Dossier local', ownerDirectory);
+    const targetDirectory = folderPathFromDiskName(targetDiskName);
+    fs.mkdirSync(path.dirname(targetDirectory), { recursive: true });
+    if (fs.existsSync(sourceDirectory)) moveDirectory(sourceDirectory, targetDirectory);
+    else fs.mkdirSync(targetDirectory, { recursive: true });
+    const sourcePrefix = `${currentDiskName}${path.sep}`.toLocaleLowerCase('en');
+    database.exec('BEGIN');
+    try {
+      database.prepare('UPDATE local_folders SET disk_name = ? WHERE id = ?').run(targetDiskName, Number(rootFolder.id));
+      const updateChild = database.prepare('UPDATE local_folders SET disk_name = ? WHERE id = ?');
+      for (const child of folders) {
+        if (!String(child.diskName).toLocaleLowerCase('en').startsWith(sourcePrefix)) continue;
+        updateChild.run(`${targetDiskName}${String(child.diskName).slice(currentDiskName.length)}`, Number(child.id));
+      }
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      if (fs.existsSync(targetDirectory) && !fs.existsSync(sourceDirectory)) moveDirectory(targetDirectory, sourceDirectory);
+      throw error;
+    }
+  }
+}
+
+function listLocalFolders(accountId = null, accountEmail = '', accountDirectory = '') {
   const database = db();
   ensureLocalStorage(database);
+  if (accountId) prepareLocalFoldersForAccount(database, accountId, accountEmail, accountDirectory);
+  const where = accountId ? 'WHERE owner_account_id = ?' : '';
   return database.prepare(`
     SELECT id, name, parent_id AS parentId, disk_name AS diskName, color,
+           owner_account_id AS ownerAccountId, owner_email AS ownerEmail, owner_directory AS ownerDirectory,
            (SELECT COUNT(*) FROM messages
              WHERE account_id = '__local__' AND folder = 'local:' || local_folders.id) AS messageCount
       FROM local_folders
+      ${where}
      ORDER BY name COLLATE NOCASE
-  `).all().map((folder) => ({
+  `).all(...(accountId ? [String(accountId)] : [])).map((folder) => ({
     ...folder,
     id: Number(folder.id),
     parentId: folder.parentId === null ? null : Number(folder.parentId),
@@ -813,7 +889,7 @@ function registerLocalEmlFile(localFolderId, filename, parsed, raw) {
   return messageId;
 }
 
-function createLocalFolder(name, parentId = null) {
+function createLocalFolder(name, parentId = null, accountId = '__legacy__', accountEmail = 'Compte local', accountDirectory = '') {
   const database = db();
   const cleanName = String(name || '').trim();
   if (!cleanName) throw new Error('Le nom du dossier local est obligatoire.');
@@ -821,18 +897,24 @@ function createLocalFolder(name, parentId = null) {
   const numericParentId = parentId === null || parentId === undefined ? null : Number(parentId);
   const parent = numericParentId === null
     ? null
-    : database.prepare('SELECT id, disk_name AS diskName FROM local_folders WHERE id = ?').get(numericParentId);
+    : database.prepare('SELECT id, disk_name AS diskName, owner_account_id AS ownerAccountId, owner_email AS ownerEmail, owner_directory AS ownerDirectory FROM local_folders WHERE id = ?').get(numericParentId);
   if (numericParentId !== null && !parent) throw new Error('Dossier parent introuvable.');
-  const duplicate = database.prepare('SELECT id FROM local_folders WHERE name = ? COLLATE NOCASE AND parent_id IS ?')
-    .get(cleanName, numericParentId);
+  const ownerAccountId = String(parent?.ownerAccountId || accountId || '').trim();
+  const ownerEmail = String(parent?.ownerEmail || accountEmail || ownerAccountId || '').trim();
+  const ownerDirectory = path.resolve(String(parent?.ownerDirectory || accountDirectory || path.join(localRootPath(), safeWindowsSegment(ownerEmail, 'Compte local'))));
+  if (!ownerAccountId || !ownerEmail) throw new Error('Sélectionnez un compte avant de créer un dossier local.');
+  prepareLocalFoldersForAccount(database, ownerAccountId, ownerEmail, ownerDirectory);
+  const duplicate = numericParentId === null
+    ? database.prepare('SELECT id FROM local_folders WHERE name = ? COLLATE NOCASE AND parent_id IS NULL AND owner_account_id = ?').get(cleanName, ownerAccountId)
+    : database.prepare('SELECT id FROM local_folders WHERE name = ? COLLATE NOCASE AND parent_id = ?').get(cleanName, numericParentId);
   if (duplicate) throw new Error('Un dossier local porte déjà ce nom.');
-  const diskName = uniqueDiskName(database, cleanName, parent?.diskName || '');
+  const diskName = uniqueDiskName(database, cleanName, parent?.diskName || ownerDirectory);
   const directory = folderPathFromDiskName(diskName);
   fs.mkdirSync(directory, { recursive: false });
   try {
-    const result = database.prepare('INSERT INTO local_folders (name, parent_id, disk_name, created_at) VALUES (?, ?, ?, ?)')
-      .run(cleanName, numericParentId, diskName, new Date().toISOString());
-    return { id: Number(result.lastInsertRowid), name: cleanName, parentId: numericParentId, diskName, path: directory, messageCount: 0 };
+    const result = database.prepare('INSERT INTO local_folders (name, parent_id, disk_name, owner_account_id, owner_email, owner_directory, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(cleanName, numericParentId, diskName, ownerAccountId, ownerEmail, ownerDirectory, new Date().toISOString());
+    return { id: Number(result.lastInsertRowid), name: cleanName, parentId: numericParentId, diskName, ownerAccountId, ownerEmail, ownerDirectory, path: directory, messageCount: 0 };
   } catch (error) {
     if (fs.existsSync(directory)) fs.rmSync(directory, { recursive: true, force: true });
     throw error;
@@ -878,8 +960,11 @@ function copyMessageToLocal(messageId, localFolderId) {
   }
 }
 
-function copyStoredFolderTreeToLocal(accountId, folderDescriptors) {
+function copyStoredFolderTreeToLocal(accountId, folderDescriptors, accountEmail = '', accountDirectory = '') {
   const database = db();
+  const ownerEmail = String(accountEmail || accountId || 'Compte local');
+  const ownerDirectory = path.resolve(String(accountDirectory || path.join(localRootPath(), safeWindowsSegment(ownerEmail, 'Compte local'))));
+  prepareLocalFoldersForAccount(database, accountId, ownerEmail, ownerDirectory);
   const descriptors = [];
   const seenPaths = new Set();
   for (const candidate of Array.isArray(folderDescriptors) ? folderDescriptors : []) {
@@ -928,21 +1013,24 @@ function copyStoredFolderTreeToLocal(accountId, folderDescriptors) {
       const requestedName = descriptor.name;
       let suffix = 1;
       let name = requestedName;
-      const nameExists = database.prepare('SELECT 1 FROM local_folders WHERE name = ? COLLATE NOCASE AND parent_id IS ?');
-      while (nameExists.get(name, parent?.id ?? null)) {
+      const nameExists = parent
+        ? database.prepare('SELECT 1 FROM local_folders WHERE name = ? COLLATE NOCASE AND parent_id = ?')
+        : database.prepare('SELECT 1 FROM local_folders WHERE name = ? COLLATE NOCASE AND parent_id IS NULL AND owner_account_id = ?');
+      while (nameExists.get(name, parent?.id ?? String(accountId))) {
         suffix += 1;
         const ending = ` (${suffix})`;
         name = `${requestedName.slice(0, 80 - ending.length)}${ending}`;
       }
-      const diskName = uniqueDiskName(database, name, parent?.diskName || '');
+      const diskName = uniqueDiskName(database, name, parent?.diskName || ownerDirectory);
       const directory = folderPathFromDiskName(diskName);
       fs.mkdirSync(directory, { recursive: false });
       createdDirectories.push(directory);
-      const folderResult = database.prepare('INSERT INTO local_folders (name, parent_id, disk_name, source_account_id, source_folder_path, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      const folderResult = database.prepare('INSERT INTO local_folders (name, parent_id, disk_name, source_account_id, source_folder_path, owner_account_id, owner_email, owner_directory, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .run(
           name, parent?.id ?? null, diskName,
           descriptor.parentSourcePath === null ? String(accountId) : null,
           descriptor.parentSourcePath === null ? descriptor.sourcePath : null,
+          String(accountId), ownerEmail, ownerDirectory,
           new Date().toISOString()
         );
       const localFolderId = Number(folderResult.lastInsertRowid);
@@ -987,17 +1075,17 @@ function copyStoredFolderTreeToLocal(accountId, folderDescriptors) {
   }
 }
 
-function copyStoredFolderToLocal(accountId, sourceFolder, preferredName) {
+function copyStoredFolderToLocal(accountId, sourceFolder, preferredName, accountEmail = '', accountDirectory = '') {
   return copyStoredFolderTreeToLocal(accountId, [{
     sourcePath: String(sourceFolder),
     parentSourcePath: null,
     name: String(preferredName || sourceFolder || 'Dossier copié')
-  }]).folder;
+  }], accountEmail, accountDirectory).folder;
 }
 
 function moveLocalFolder(localFolderId, targetParentId = null) {
   const database = db();
-  const folders = database.prepare('SELECT id, parent_id AS parentId, disk_name AS diskName FROM local_folders').all();
+  const folders = database.prepare('SELECT id, parent_id AS parentId, disk_name AS diskName, owner_account_id AS ownerAccountId, owner_email AS ownerEmail, owner_directory AS ownerDirectory FROM local_folders').all();
   const source = folders.find((folder) => Number(folder.id) === Number(localFolderId));
   if (!source) throw new Error('Dossier local introuvable.');
   const numericParentId = targetParentId === null || targetParentId === undefined ? null : Number(targetParentId);
@@ -1006,12 +1094,13 @@ function moveLocalFolder(localFolderId, targetParentId = null) {
     ? null
     : folders.find((folder) => Number(folder.id) === numericParentId);
   if (numericParentId !== null && !parent) throw new Error('Dossier parent introuvable.');
+  if (parent && parent.ownerAccountId !== source.ownerAccountId) throw new Error('Un dossier local ne peut pas être déplacé vers un autre compte.');
   const sourcePrefix = `${source.diskName}${path.sep}`.toLocaleLowerCase('en');
   if (parent && (Number(parent.id) === Number(source.id) || String(parent.diskName).toLocaleLowerCase('en').startsWith(sourcePrefix))) {
     throw new Error('Un dossier ne peut pas être déplacé dans lui-même ou dans l’un de ses sous-dossiers.');
   }
 
-  const targetDiskName = uniqueDiskName(database, path.basename(source.diskName), parent?.diskName || '');
+  const targetDiskName = uniqueDiskName(database, path.basename(source.diskName), parent?.diskName || source.ownerDirectory || localRootPath());
   const sourceDirectory = folderPathFromDiskName(source.diskName);
   const targetDirectory = folderPathFromDiskName(targetDiskName);
   fs.mkdirSync(path.dirname(targetDirectory), { recursive: true });
@@ -1040,13 +1129,13 @@ function renameLocalFolder(localFolderId, name) {
   const cleanName = String(name || '').trim();
   if (!cleanName) throw new Error('Le nom du dossier local est obligatoire.');
   if (cleanName.length > 80) throw new Error('Le nom du dossier local est trop long.');
-  const folders = database.prepare('SELECT id, name, parent_id AS parentId, disk_name AS diskName FROM local_folders').all();
+  const folders = database.prepare('SELECT id, name, parent_id AS parentId, disk_name AS diskName, owner_account_id AS ownerAccountId, owner_email AS ownerEmail, owner_directory AS ownerDirectory FROM local_folders').all();
   const source = folders.find((folder) => Number(folder.id) === Number(localFolderId));
   if (!source) throw new Error('Dossier local introuvable.');
-  const duplicate = folders.find((folder) => Number(folder.id) !== Number(source.id) && Number(folder.parentId) === Number(source.parentId) && String(folder.name).localeCompare(cleanName, 'fr', { sensitivity: 'base' }) === 0);
+  const duplicate = folders.find((folder) => Number(folder.id) !== Number(source.id) && Number(folder.parentId) === Number(source.parentId) && folder.ownerAccountId === source.ownerAccountId && String(folder.name).localeCompare(cleanName, 'fr', { sensitivity: 'base' }) === 0);
   if (duplicate) throw new Error('Un dossier local porte déjà ce nom.');
   const parent = source.parentId === null ? null : folders.find((folder) => Number(folder.id) === Number(source.parentId));
-  const targetDiskName = uniqueDiskName(database, cleanName, parent?.diskName || '');
+  const targetDiskName = uniqueDiskName(database, cleanName, parent?.diskName || source.ownerDirectory || localRootPath());
   const sourceDirectory = folderPathFromDiskName(source.diskName);
   const targetDirectory = folderPathFromDiskName(targetDiskName);
   const sourcePrefix = `${source.diskName}${path.sep}`.toLocaleLowerCase('en');
@@ -1070,18 +1159,18 @@ function renameLocalFolder(localFolderId, name) {
 
 function duplicateLocalFolderTree(localFolderId) {
   const database = db();
-  const folders = database.prepare('SELECT id, name, parent_id AS parentId FROM local_folders ORDER BY id').all();
+  const folders = database.prepare('SELECT id, name, parent_id AS parentId, owner_account_id AS ownerAccountId, owner_email AS ownerEmail, owner_directory AS ownerDirectory FROM local_folders ORDER BY id').all();
   const root = folders.find((folder) => Number(folder.id) === Number(localFolderId));
   if (!root) throw new Error('Dossier local introuvable.');
   const created = new Map();
   const copyFolder = (source, targetParentId, preferredName = source.name) => {
     let name = preferredName;
     let suffix = 1;
-    while (database.prepare('SELECT 1 FROM local_folders WHERE name = ? COLLATE NOCASE AND parent_id IS ?').get(name, targetParentId)) {
+    while (database.prepare('SELECT 1 FROM local_folders WHERE name = ? COLLATE NOCASE AND parent_id IS ? AND owner_account_id = ?').get(name, targetParentId, root.ownerAccountId)) {
       suffix += 1;
       name = `${preferredName} (${suffix})`;
     }
-    const target = createLocalFolder(name, targetParentId);
+    const target = createLocalFolder(name, targetParentId, root.ownerAccountId, root.ownerEmail, root.ownerDirectory);
     created.set(Number(source.id), target);
     const messages = database.prepare("SELECT id FROM messages WHERE account_id = '__local__' AND folder = ?").all(`local:${source.id}`);
     for (const message of messages) copyMessageToLocal(message.id, target.id);

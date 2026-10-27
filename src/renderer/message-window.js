@@ -209,18 +209,34 @@ async function loadMessage() {
     const attachments = document.createElement('div');
     attachments.className = 'received-attachments';
     for (const attachment of message.attachments) {
+      const item = document.createElement('div');
+      item.className = 'attachment-item';
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'attachment-button';
       button.textContent = `📎 ${attachment.filename} (${formatSize(attachment.size)})`;
+      button.title = 'Ouvrir avec l’application Windows par défaut';
       button.addEventListener('click', async () => {
+        try {
+          await window.gestionMail.openAttachment(message.id, attachment.attachmentIndex);
+        } catch (error) {
+          window.alert(`Impossible d’ouvrir la pièce jointe : ${readableError(error)}`);
+        }
+      });
+      const save = document.createElement('button');
+      save.type = 'button';
+      save.className = 'attachment-save-button';
+      save.textContent = 'Enregistrer';
+      save.title = 'Enregistrer la pièce jointe dans un dossier';
+      save.addEventListener('click', async () => {
         try {
           await window.gestionMail.saveAttachment(message.id, attachment.attachmentIndex);
         } catch (error) {
           window.alert(`Impossible d’enregistrer la pièce jointe : ${readableError(error)}`);
         }
       });
-      attachments.append(button);
+      item.append(button, save);
+      attachments.append(item);
     }
     container.append(attachments);
   }

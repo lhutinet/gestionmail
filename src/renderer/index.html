@@ -4,13 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data: http: https:">
-    <title>GestionMail</title>
+    <title>Monmail</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
     <div class="app-shell">
       <aside class="local-sidebar">
-        <div class="local-sidebar-heading">Stockage local</div>
+        <div class="local-sidebar-header">
+          <div class="local-sidebar-title"><div class="local-sidebar-heading">Stockage local</div><div id="local-sidebar-account" class="local-sidebar-account">Aucun compte</div></div>
+          <button id="toggle-local-sidebar" class="local-sidebar-toggle" type="button" aria-expanded="true" title="Réduire le stockage local"><span aria-hidden="true">‹</span></button>
+        </div>
         <p class="local-sidebar-help">Glissez ici un e-mail ou un dossier complet. Double-cliquez sur un dossier local pour l’ouvrir dans Windows.</p>
         <div id="folder-copy-progress" class="folder-copy-progress" role="status" aria-live="polite" hidden>
           <div class="folder-copy-progress-heading"><span class="progress-spinner" aria-hidden="true"></span><strong id="folder-copy-progress-label">Copie en cours…</strong></div>
@@ -25,7 +28,7 @@
       </aside>
       <div class="column-resizer app-resizer" data-column-resize="local" role="separator" aria-label="Redimensionner les dossiers locaux" aria-orientation="vertical" tabindex="0" title="Glisser pour redimensionner — double-clic pour réinitialiser"></div>
       <aside class="sidebar">
-        <div class="brand"><span>G</span> GestionMail</div>
+        <div class="brand"><span>M</span> Monmail</div>
         <label class="account-switcher">Compte actif
           <select id="account-selector"><option value="">Choisir un compte</option></select>
         </label>
@@ -74,7 +77,7 @@
         </div>
         <section id="welcome" class="empty-state">
           <div class="mail-illustration">✉</div>
-          <h2>Bienvenue dans GestionMail</h2>
+          <h2>Bienvenue dans Monmail</h2>
           <p>Ajoutez votre premier compte pour recevoir, lire et conserver vos e-mails sur cet ordinateur.</p>
           <button id="empty-add-account" class="primary" type="button">Ajouter mon compte</button>
         </section>
@@ -98,6 +101,11 @@
           <input name="id" type="hidden">
           <label>Nom affiché<input name="name" required autocomplete="name" placeholder="Marie Dupont"></label>
           <label>Adresse e-mail<input name="email" type="email" required autocomplete="email" placeholder="marie@exemple.fr"></label>
+          <fieldset class="full">
+            <legend>Dossiers locaux de ce compte</legend>
+            <div class="storage-row"><input name="localDirectory" type="text" readonly required placeholder="Choisissez un dossier Windows"><button id="choose-account-local-directory" class="secondary" type="button">Parcourir…</button></div>
+            <small>Les dossiers et fichiers .eml de cette adresse seront enregistrés uniquement à cet emplacement. Si vous le changez, Monmail déplacera l’arborescence existante.</small>
+          </fieldset>
           <label>Type de réception<select name="protocol"><option value="imap">IMAP — synchronisation</option><option value="pop3">POP3 — téléchargement</option></select></label>
           <label>Authentification<select name="authType"><option value="password">Mot de passe</option><option value="oauth2">OAuth2 — Gmail ou Microsoft</option></select></label>
           <label>Identifiant<input name="username" required autocomplete="username" placeholder="marie@exemple.fr"></label>
@@ -290,7 +298,7 @@
     <dialog id="todo-dialog" class="todo-dialog">
       <div class="todo-panel">
         <div class="dialog-heading">
-          <div><h2>TODO GestionMail</h2><p>La liste de travail de l’application, enregistrée localement.</p></div>
+          <div><h2>TODO Monmail</h2><p>La liste de travail de l’application, enregistrée localement.</p></div>
           <button id="close-todo" class="icon-button" type="button" aria-label="Fermer">×</button>
         </div>
         <form id="todo-form" class="todo-form">
@@ -374,7 +382,7 @@
     <dialog id="settings-dialog" class="settings-dialog">
       <form id="settings-form" method="dialog">
         <div class="dialog-heading">
-          <div><h2>Paramètres</h2><p>Réglages généraux et stockage local de GestionMail.</p></div>
+          <div><h2>Paramètres</h2><p>Réglages généraux, apparence et fonctionnement de Monmail.</p></div>
           <button id="close-settings" class="icon-button" type="button" aria-label="Fermer">×</button>
         </div>
         <div class="settings-fields">
@@ -407,14 +415,6 @@
           <label class="checkbox"><input name="minimizeToTray" type="checkbox"> Réduire dans la zone de notification Windows</label>
           <label class="checkbox"><input name="groupConversations" type="checkbox"> Regrouper les messages par conversation</label>
           <fieldset>
-            <legend>Emplacement des dossiers locaux</legend>
-            <div class="storage-row">
-              <input name="dataDirectory" type="text" readonly>
-              <button id="choose-data-directory" class="secondary" type="button">Parcourir…</button>
-            </div>
-            <small>La base d’index et le répertoire « Dossiers locaux » contenant les fichiers .eml sont conservés ici.</small>
-          </fieldset>
-          <fieldset>
             <legend>Automatisation</legend>
             <button id="open-rules" class="secondary" type="button">Gérer le tri automatique…</button>
             <small>Les règles sont appliquées après chaque relève des nouveaux messages.</small>
@@ -422,7 +422,7 @@
           <fieldset>
             <legend>Sauvegarde et restauration</legend>
             <div class="backup-actions"><button id="create-backup" class="secondary" type="button">Créer une sauvegarde complète…</button><button id="restore-backup" class="secondary" type="button">Restaurer une sauvegarde…</button></div>
-            <small>Comptes, paramètres, contacts, règles, messages et arborescence locale sont inclus. Une restauration redémarre GestionMail et conserve une copie de sécurité des données remplacées.</small>
+            <small>Comptes, paramètres, contacts, règles, messages et arborescence locale sont inclus. Une restauration redémarre Monmail et conserve une copie de sécurité des données remplacées.</small>
           </fieldset>
           <fieldset>
             <legend>Mises à jour</legend>

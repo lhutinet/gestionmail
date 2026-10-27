@@ -1,6 +1,7 @@
 const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const zlib = require('node:zlib');
 const { performance } = require('node:perf_hooks');
 const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, shell, Tray } = require('electron');
@@ -95,7 +96,16 @@ function parseContactFile(filePath) {
 }
 
 if (isSmokeTest) {
-  app.setPath('userData', path.join(os.tmpdir(), `gestionmail-smoke-${process.pid}`));
+  const smokeProfile = path.join(os.tmpdir(), `gestionmail-smoke-${process.pid}`);
+  app.setPath('userData', smokeProfile);
+  app.commandLine.appendSwitch('disk-cache-dir', path.join(smokeProfile, 'Cache'));
+} else {
+  // Conserver le profil historique malgré le changement de nom de l’application.
+  app.setPath('userData', path.join(app.getPath('appData'), 'GestionMail'));
+  // Les caches Chromium sont temporaires et appartiennent à AppData Local, pas aux données sauvegardées.
+  const localCacheRoot = path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'Monmail', 'Cache');
+  fs.mkdirSync(localCacheRoot, { recursive: true });
+  app.commandLine.appendSwitch('disk-cache-dir', localCacheRoot);
 }
 
 function showMainWindow() {
@@ -109,12 +119,12 @@ function updateTrayMenu() {
   if (!tray || tray.isDestroyed()) return;
   const visible = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible());
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Afficher GestionMail', enabled: !visible, click: showMainWindow },
-    { label: 'Masquer GestionMail', enabled: visible, click: () => mainWindow?.hide() },
+    { label: 'Afficher Monmail', enabled: !visible, click: showMainWindow },
+    { label: 'Masquer Monmail', enabled: visible, click: () => mainWindow?.hide() },
     { type: 'separator' },
     { label: 'Rechercher les mises à jour', click: () => checkForUpdates().catch((error) => broadcastUpdate({ state: 'error', message: error.message })) },
     { type: 'separator' },
-    { label: 'Quitter GestionMail', click: () => { isQuitting = true; app.quit(); } }
+    { label: 'Quitter Monmail', click: () => { isQuitting = true; app.quit(); } }
   ]));
 }
 
@@ -133,7 +143,7 @@ async function checkForUpdates(automatic = false) {
 }
 
 autoUpdater.on('update-available', (info) => { updateAvailable = true; broadcastUpdate({ state: 'available', message: `Version ${info.version} disponible.`, version: info.version }); });
-autoUpdater.on('update-not-available', () => broadcastUpdate({ state: 'current', message: 'GestionMail est à jour.' }));
+autoUpdater.on('update-not-available', () => broadcastUpdate({ state: 'current', message: 'Monmail est à jour.' }));
 autoUpdater.on('download-progress', (progress) => broadcastUpdate({ state: 'downloading', message: `Téléchargement : ${Math.round(progress.percent)} %`, percent: progress.percent }));
 autoUpdater.on('update-downloaded', (info) => { updateDownloaded = true; broadcastUpdate({ state: 'downloaded', message: `Version ${info.version} prête à être installée.`, version: info.version }); });
 autoUpdater.on('error', (error) => broadcastUpdate({ state: 'error', message: `Mise à jour impossible : ${error.message}` }));
@@ -197,7 +207,7 @@ function updateUnreadBadge() {
     const unread = countUnreadMessages();
     const icon = trayIcon(unread);
     tray.setImage(icon);
-    tray.setToolTip(unread ? `GestionMail — ${unread} message${unread > 1 ? 's' : ''} non lu${unread > 1 ? 's' : ''}` : 'GestionMail — aucun message non lu');
+    tray.setToolTip(unread ? `Monmail — ${unread} message${unread > 1 ? 's' : ''} non lu${unread > 1 ? 's' : ''}` : 'Monmail — aucun message non lu');
     if (process.platform === 'win32' && mainWindow && !mainWindow.isDestroyed()) mainWindow.setOverlayIcon(unread ? icon : null, unread ? `${unread} messages non lus` : '');
   } catch (error) {
     console.warn(`Compteur non lu indisponible : ${error.message}`);
@@ -207,7 +217,7 @@ function updateUnreadBadge() {
 async function createTray() {
   if (isSmokeTest || tray) return;
   tray = new Tray(trayIcon(0));
-  tray.setToolTip('GestionMail');
+  tray.setToolTip('Monmail');
   tray.on('double-click', showMainWindow);
   tray.on('click', showMainWindow);
   updateTrayMenu();
@@ -222,7 +232,7 @@ function createWindow() {
     minHeight: 600,
     show: !isSmokeTest,
     backgroundColor: '#f3f5f8',
-    title: 'GestionMail',
+    title: 'Monmail',
     icon: trayIcon(0),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -380,10 +390,14 @@ async function refreshLocalEmlFiles() {
   return { imported, durationMs: startupMetrics.localScanMs };
 }
 
-function scheduleLocalEmlRefresh(sender = null) {
+function scheduleLocalEmlRefresh(sender = null, accountId = null, accountEmail = '', accountDirectory = '') {
   if (localScanPromise) return localScanPromise;
   localScanPromise = new Promise((resolve) => setTimeout(resolve, 150)).then(refreshLocalEmlFiles).then((result) => {
-    if (sender && !sender.isDestroyed()) sender.send('local-folders:refreshed', { folders: listLocalFolders(), ...result });
+    if (sender && !sender.isDestroyed()) sender.send('local-folders:refreshed', {
+      accountId,
+      folders: accountId ? listLocalFolders(accountId, accountEmail, accountDirectory) : listLocalFolders(),
+      ...result
+    });
     updateUnreadBadge();
     return result;
   }).catch((error) => console.warn(`Analyse différée des fichiers EML impossible : ${error.message}`)).finally(() => {
@@ -427,7 +441,7 @@ app.whenReady().then(async () => {
         throw new Error('Échec du contrôle de l’état lu/non lu.');
       }
       const smokeContact = saveContact({
-        name: 'Contact test', email: 'contact@example.test', phone: '0102030405', company: 'GestionMail'
+        name: 'Contact test', email: 'contact@example.test', phone: '0102030405', company: 'Monmail'
       });
       const updatedContact = saveContact({ ...smokeContact, name: 'Contact modifié', notes: 'Note test' });
       if (updatedContact.name !== 'Contact modifié' || listContacts().length !== 1) {
@@ -596,7 +610,7 @@ app.whenReady().then(async () => {
       if (
         !migration.changed ||
         listMessages('__migration__', 'INBOX').length !== 1 ||
-        !fs.existsSync(path.join(getSettings().dataDirectory, 'Dossiers locaux', migrationFolder.diskName)) ||
+        !fs.existsSync(migrationFolder.path) ||
         listMessages('__local__', `local:${migrationFolder.id}`).length !== 2 ||
         getSettings().autoSyncMinutes !== 5 ||
         getSettings().notificationsEnabled !== false ||
@@ -660,7 +674,7 @@ app.whenReady().then(async () => {
     const useVcard = format === 'vcf';
     const result = await dialog.showSaveDialog(owner, {
       title: 'Exporter les contacts',
-      defaultPath: `contacts-gestionmail.${useVcard ? 'vcf' : 'csv'}`,
+      defaultPath: `contacts-monmail.${useVcard ? 'vcf' : 'csv'}`,
       filters: [{ name: useVcard ? 'vCard' : 'CSV', extensions: [useVcard ? 'vcf' : 'csv'] }]
     });
     if (result.canceled || !result.filePath) return { exported: false };
@@ -724,12 +738,18 @@ app.whenReady().then(async () => {
     const account = await getAccountWithPassword(accountId);
     return listFolders(account);
   });
-  ipcMain.handle('local-folders:list', (event) => {
-    const folders = listLocalFolders();
-    scheduleLocalEmlRefresh(event.sender);
+  ipcMain.handle('local-folders:list', (event, accountId) => {
+    const account = listAccounts().find((item) => item.id === String(accountId || ''));
+    if (!account) return [];
+    const folders = listLocalFolders(account.id, account.email, account.localDirectory);
+    scheduleLocalEmlRefresh(event.sender, account.id, account.email, account.localDirectory);
     return folders;
   });
-  ipcMain.handle('local-folders:create', (_event, name, parentId) => createLocalFolder(name, parentId));
+  ipcMain.handle('local-folders:create', (_event, accountId, name, parentId) => {
+    const account = listAccounts().find((item) => item.id === String(accountId || ''));
+    if (!account) throw new Error('Sélectionnez un compte avant de créer un dossier local.');
+    return createLocalFolder(name, parentId, account.id, account.email, account.localDirectory);
+  });
   ipcMain.handle('local-folders:delete', (_event, localFolderId) => deleteLocalFolder(localFolderId));
   ipcMain.handle('local-folders:delete-tree', (_event, localFolderId) => deleteLocalFolderTree(localFolderId));
   ipcMain.handle('local-folders:cancel-copy', (event) => {
@@ -818,7 +838,7 @@ app.whenReady().then(async () => {
         current: foldersToSync.length,
         total: foldersToSync.length || 1
       }, 1);
-      const result = copyStoredFolderTreeToLocal(account.id, [...descriptorByPath.values()]);
+      const result = copyStoredFolderTreeToLocal(account.id, [...descriptorByPath.values()], account.email, account.localDirectory);
       reportProgress({
         label: String(folderName || sourceFolder?.name || sourcePath),
         detail: `Copie terminée — ${result.totalMessages} message${result.totalMessages > 1 ? 's' : ''}`,
@@ -901,10 +921,24 @@ app.whenReady().then(async () => {
     fs.writeFileSync(result.filePath, attachment.content);
     return { saved: true, path: result.filePath };
   });
+  ipcMain.handle('attachments:open', async (_event, messageId, attachmentIndex) => {
+    const attachment = getAttachment(messageId, attachmentIndex);
+    const safeName = String(path.basename(attachment.filename || 'piece-jointe'))
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+      .replace(/[. ]+$/g, '') || 'piece-jointe';
+    const messageKey = crypto.createHash('sha256').update(String(messageId)).digest('hex').slice(0, 16);
+    const attachmentDirectory = path.join(app.getPath('temp'), 'GestionMail', 'pieces-jointes', messageKey);
+    const filePath = path.join(attachmentDirectory, `${Number(attachmentIndex)}-${safeName}`);
+    fs.mkdirSync(attachmentDirectory, { recursive: true });
+    fs.writeFileSync(filePath, attachment.content);
+    const error = await shell.openPath(filePath);
+    if (error) throw new Error(`Windows ne peut pas ouvrir ce fichier : ${error}`);
+    return { opened: true, path: filePath };
+  });
   ipcMain.handle('notifications:show', (_event, title, body) => {
     if (!Notification.isSupported()) return { shown: false };
     const notification = new Notification({
-      title: String(title || 'GestionMail').slice(0, 120),
+      title: String(title || 'Monmail').slice(0, 120),
       body: String(body || '').slice(0, 300),
       silent: false
     });
@@ -926,23 +960,32 @@ app.whenReady().then(async () => {
   ipcMain.handle('settings:get', () => getSettings());
   ipcMain.handle('backup:create', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
-    const result = await dialog.showOpenDialog(owner, { title: 'Choisir où créer la sauvegarde GestionMail', properties: ['openDirectory', 'createDirectory'] });
+    const result = await dialog.showOpenDialog(owner, { title: 'Choisir où créer la sauvegarde Monmail', properties: ['openDirectory', 'createDirectory'] });
     if (result.canceled || !result.filePaths[0]) return { created: false };
     checkpointDatabase();
     return createBackup(result.filePaths[0]);
   });
   ipcMain.handle('backup:restore', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
-    const result = await dialog.showOpenDialog(owner, { title: 'Choisir une sauvegarde GestionMail', properties: ['openDirectory'] });
+    const result = await dialog.showOpenDialog(owner, { title: 'Choisir une sauvegarde Monmail', properties: ['openDirectory'] });
     if (result.canceled || !result.filePaths[0]) return { scheduled: false };
     const scheduled = scheduleRestore(result.filePaths[0]);
     setTimeout(() => { isQuitting = true; app.relaunch(); app.quit(); }, 300);
     return scheduled;
   });
+  ipcMain.handle('accounts:choose-local-directory', async (event, currentPath) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(owner, {
+      title: 'Choisir le dossier local de ce compte',
+      defaultPath: String(currentPath || app.getPath('documents')),
+      properties: ['openDirectory', 'createDirectory']
+    });
+    return result.canceled ? null : result.filePaths[0];
+  });
   ipcMain.handle('settings:choose-directory', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(owner, {
-      title: 'Choisir le dossier de stockage GestionMail',
+      title: 'Choisir le dossier de stockage Monmail',
       defaultPath: getSettings().dataDirectory,
       properties: ['openDirectory', 'createDirectory']
     });
