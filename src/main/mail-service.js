@@ -3,7 +3,7 @@ const nodemailer = require('nodemailer');
 const { simpleParser } = require('mailparser');
 const sanitizeHtml = require('sanitize-html');
 const { Pop3Client } = require('./pop3-client');
-const { storeMessage } = require('./message-store');
+const { reconcileRemoteFolderMessages, storeMessage } = require('./message-store');
 
 function imapOptions(account) {
   return {
@@ -97,7 +97,13 @@ async function syncImap(account, folder, fetchAll = false) {
   try {
     lock = await client.getMailboxLock(folder);
     const total = client.mailbox.exists;
-    if (!total) return { imported: 0, total: 0 };
+    const serverUids = await client.search({ all: true }, { uid: true });
+    const remoteId = (uid) => folder.toUpperCase() === 'INBOX' ? `imap-${uid}` : `imap-${folder}-${uid}`;
+    const activeRemoteIds = Array.isArray(serverUids) ? serverUids.map(remoteId) : null;
+    if (!total) {
+      const reconciliation = activeRemoteIds ? reconcileRemoteFolderMessages(account.id, folder, activeRemoteIds) : { removed: 0 };
+      return { imported: 0, total: 0, removed: reconciliation.removed };
+    }
     const start = fetchAll ? 1 : Math.max(1, total - 49);
     for await (const item of client.fetch(`${start}:*`, {
       uid: true,
@@ -109,7 +115,7 @@ async function syncImap(account, folder, fetchAll = false) {
       storeMessage({
         accountId: account.id,
         folder,
-        remoteId: folder.toUpperCase() === 'INBOX' ? `imap-${item.uid}` : `imap-${folder}-${item.uid}`,
+        remoteId: remoteId(item.uid),
         subject: parsed.subject,
         from: parsed.from,
         to: parsed.to,
@@ -122,7 +128,8 @@ async function syncImap(account, folder, fetchAll = false) {
       });
       imported += 1;
     }
-    return { imported, total };
+    const reconciliation = activeRemoteIds ? reconcileRemoteFolderMessages(account.id, folder, activeRemoteIds) : { removed: 0 };
+    return { imported, total, removed: reconciliation.removed };
   } finally {
     if (lock) lock.release();
     await client.logout().catch(() => undefined);
@@ -204,6 +211,84 @@ async function moveRemoteMessage(account, reference, destination) {
   }
 }
 
+async function copyRemoteMessage(account, reference, destination) {
+  if (account.protocol !== 'imap') throw new Error('La copie entre dossiers nécessite un compte IMAP.');
+  if (!String(destination || '').trim()) throw new Error('Dossier de destination introuvable.');
+  const client = new ImapFlow(imapOptions(account));
+  await client.connect();
+  let lock;
+  try {
+    lock = await client.getMailboxLock(reference.folder);
+    const copied = await client.messageCopy(imapUid(reference), destination, { uid: true });
+    if (!copied) throw new Error('Le serveur a refusé la copie du message.');
+    return { copied: true };
+  } finally {
+    if (lock) lock.release();
+    await client.logout().catch(() => undefined);
+  }
+}
+
+async function deleteRemoteMessage(account, reference) {
+  if (account.protocol !== 'imap') throw new Error('La suppression sur le serveur nécessite un compte IMAP.');
+  const client = new ImapFlow(imapOptions(account));
+  await client.connect();
+  let lock;
+  try {
+    lock = await client.getMailboxLock(reference.folder);
+    const deleted = await client.messageDelete(imapUid(reference), { uid: true });
+    if (!deleted) throw new Error('Le serveur a refusé la suppression définitive du message.');
+    return { deleted: true };
+  } finally {
+    if (lock) lock.release();
+    await client.logout().catch(() => undefined);
+  }
+}
+
+async function createRemoteFolder(account, folderPath) {
+  if (account.protocol !== 'imap') throw new Error('La création de dossiers nécessite un compte IMAP.');
+  const target = String(folderPath || '').trim();
+  if (!target) throw new Error('Le nom du dossier est obligatoire.');
+  const client = new ImapFlow(imapOptions(account));
+  await client.connect();
+  try {
+    await client.mailboxCreate(target);
+    return { created: true, path: target };
+  } finally {
+    await client.logout().catch(() => undefined);
+  }
+}
+
+async function renameRemoteFolder(account, folderPath, newPath) {
+  if (account.protocol !== 'imap') throw new Error('Le renommage de dossiers nécessite un compte IMAP.');
+  const source = String(folderPath || '').trim();
+  const target = String(newPath || '').trim();
+  if (!source || !target) throw new Error('Le nom du dossier est obligatoire.');
+  if (source.toUpperCase() === 'INBOX') throw new Error('La boîte de réception ne peut pas être renommée.');
+  const client = new ImapFlow(imapOptions(account));
+  await client.connect();
+  try {
+    await client.mailboxRename(source, target);
+    return { renamed: true, path: target };
+  } finally {
+    await client.logout().catch(() => undefined);
+  }
+}
+
+async function deleteRemoteFolder(account, folderPath) {
+  if (account.protocol !== 'imap') throw new Error('La suppression de dossiers nécessite un compte IMAP.');
+  const target = String(folderPath || '').trim();
+  if (!target) throw new Error('Dossier introuvable.');
+  if (target.toUpperCase() === 'INBOX') throw new Error('La boîte de réception ne peut pas être supprimée.');
+  const client = new ImapFlow(imapOptions(account));
+  await client.connect();
+  try {
+    await client.mailboxDelete(target);
+    return { deleted: true };
+  } finally {
+    await client.logout().catch(() => undefined);
+  }
+}
+
 async function sendMessage(account, message) {
   if (!String(message.to || '').trim()) throw new Error('Le destinataire est obligatoire.');
   const attachments = [];
@@ -255,8 +340,13 @@ async function sendMessage(account, message) {
 }
 
 module.exports = {
+  copyRemoteMessage,
+  createRemoteFolder,
+  deleteRemoteFolder,
+  deleteRemoteMessage,
   listFolders,
   moveRemoteMessage,
+  renameRemoteFolder,
   sendMessage,
   setRemoteReadState,
   syncAccount,

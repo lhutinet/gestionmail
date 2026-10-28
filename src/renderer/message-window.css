@@ -31,6 +31,7 @@ dialog input { width: 100%; padding: 10px 11px; border: 1px solid #b8c5d2; borde
 .form-error { min-height: 19px; margin: -8px 0 0; color: #b42318; font-size: 13px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 9px; }
 .dialog-actions button { padding: 9px 13px; border: 1px solid #b8c5d2; border-radius: 7px; color: #263243; background: white; }
+.icon-action { display: inline-grid; width: 36px; min-width: 36px; height: 36px; place-items: center; padding: 0 !important; font-size: 17px; line-height: 1; }
 .standalone-message { width: 100%; height: 100%; padding: 32px 42px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
 .standalone-message h1 { margin: 0 0 18px; color: #172235; font-size: 27px; }
 .message-headers { display: grid; gap: 7px; padding-bottom: 20px; border-bottom: 1px solid #dfe4ea; color: #5b6878; font-size: 13px; line-height: 1.5; }

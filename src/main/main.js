@@ -9,9 +9,9 @@ const { simpleParser } = require('mailparser');
 const { autoUpdater } = require('electron-updater');
 const { deleteAccount, getAccountWithPassword, listAccounts, saveAccount, validateAccount } = require('./account-store');
 const {
-  changeDataDirectory, checkpointDatabase, copyMessageToLocal, copyStoredFolderToLocal, copyStoredFolderTreeToLocal, countUnreadMessages, createLocalFolder, deleteAccountMessages, deleteContact, deleteContactGroup, deleteLocalFolder, deleteLocalFolderTree, deleteMailRule, duplicateLocalFolderTree,
+  changeDataDirectory, checkpointDatabase, copyMessageToLocal, copyStoredFolderToLocal, copyStoredFolderTreeToLocal, countUnreadMessages, createLocalFolder, deleteAccountFolderMessages, deleteAccountMessages, deleteContact, deleteContactGroup, deleteLocalFolder, deleteLocalFolderTree, deleteMailRule, duplicateLocalFolderTree,
   getAttachment, getLocalFolderPath, getMessage, getMessageReference, listContactGroups, listContacts, listLocalFolders,
-  deleteDraft, getDraft, isMailRuleApplied, listDrafts, listMailRules, listMessages, listRuleCandidateMessages, listUnindexedEmlFiles, markMailRuleApplied, mergeDuplicateContacts, moveLocalFolder, registerLocalEmlFile, removeLocalMessage, renameLocalFolder, saveContact, saveContactGroup, saveDraft, saveMailRule, searchMessages, setLocalFolderColor, setMessageRead, storeMessage, storeSentMessage
+  deleteDraft, getDraft, isMailRuleApplied, listDrafts, listMailRules, listMessages, listRuleCandidateMessages, listUnindexedEmlFiles, markMailRuleApplied, mergeDuplicateContacts, moveLocalFolder, registerLocalEmlFile, removeLocalMessage, renameAccountFolderMessages, renameLocalFolder, saveContact, saveContactGroup, saveDraft, saveMailRule, searchMessages, setLocalFolderColor, setMessageRead, storeMessage, storeSentMessage
 } = require('./message-store');
 const { getSettings, saveSettings } = require('./settings-store');
 const { deleteTodo, listTodos, saveTodo } = require('./todo-store');
@@ -19,7 +19,7 @@ const { deleteTemplate, getComposerData, saveSignature, saveTemplate } = require
 const { applyPendingRestore, createBackup, scheduleRestore } = require('./backup-store');
 const { authorizeOAuth } = require('./oauth-service');
 const {
-  listFolders, moveRemoteMessage, sendMessage, setRemoteReadState,
+  copyRemoteMessage, createRemoteFolder, deleteRemoteFolder, deleteRemoteMessage, listFolders, moveRemoteMessage, renameRemoteFolder, sendMessage, setRemoteReadState,
   syncAccount, testConfiguration
 } = require('./mail-service');
 const isSmokeTest = process.argv.includes('--smoke-test');
@@ -33,6 +33,8 @@ const folderCopyJobs = new Map();
 let localScanPromise = null;
 let updateAvailable = false;
 let updateDownloaded = false;
+
+if (process.platform === 'win32') app.setAppUserModelId('fr.gestionmail.desktop');
 
 function csvCell(value) {
   return `"${String(value || '').replaceAll('"', '""')}"`;
@@ -164,7 +166,14 @@ function pngChunk(type, data) {
   return Buffer.concat([size, name, data, checksum]);
 }
 
+function applicationIcon() {
+  const icon = nativeImage.createFromPath(path.join(__dirname, '..', 'assets', 'mail.ico'));
+  return icon.isEmpty() ? null : icon;
+}
+
 function trayIcon(unread = 0) {
+  const application = applicationIcon();
+  if (application) return application.resize({ width: 32, height: 32 });
   const width = 32;
   const height = 32;
   const pixels = Buffer.alloc(width * height * 4);
@@ -201,14 +210,50 @@ function trayIcon(unread = 0) {
   return nativeImage.createFromBuffer(png);
 }
 
+function unreadBadgeIcon(unread) {
+  const width = 16;
+  const height = 16;
+  const pixels = Buffer.alloc(width * height * 4);
+  const pixel = (x, y, color) => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    pixels.set(color, (y * width + x) * 4);
+  };
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if ((x - 7.5) ** 2 + (y - 7.5) ** 2 <= 56.25) pixel(x, y, [216, 59, 53, 255]);
+    }
+  }
+  const glyphs = {
+    '0': ['111', '101', '101', '101', '111'], '1': ['010', '110', '010', '010', '111'],
+    '2': ['111', '001', '111', '100', '111'], '3': ['111', '001', '111', '001', '111'],
+    '4': ['101', '101', '111', '001', '001'], '5': ['111', '100', '111', '001', '111'],
+    '6': ['111', '100', '111', '101', '111'], '7': ['111', '001', '010', '010', '010'],
+    '8': ['111', '101', '111', '101', '111'], '9': ['111', '101', '111', '001', '111'],
+    '+': ['000', '010', '111', '010', '000']
+  };
+  const label = unread > 9 ? '9+' : String(unread);
+  const startX = 8 - Math.floor((label.length * 4 - 1) / 2);
+  for (const [characterIndex, character] of [...label].entries()) {
+    for (const [row, pattern] of glyphs[character].entries()) {
+      for (const [column, enabled] of [...pattern].entries()) {
+        if (enabled === '1') pixel(startX + characterIndex * 4 + column, 5 + row, [255, 255, 255, 255]);
+      }
+    }
+  }
+  const raw = Buffer.alloc((width * 4 + 1) * height);
+  for (let y = 0; y < height; y += 1) pixels.copy(raw, y * (width * 4 + 1) + 1, y * width * 4, (y + 1) * width * 4);
+  const header = Buffer.alloc(13); header.writeUInt32BE(width, 0); header.writeUInt32BE(height, 4); header[8] = 8; header[9] = 6;
+  const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), pngChunk('IHDR', header), pngChunk('IDAT', zlib.deflateSync(raw)), pngChunk('IEND', Buffer.alloc(0))]);
+  return nativeImage.createFromBuffer(png);
+}
+
 function updateUnreadBadge() {
   if (!tray || tray.isDestroyed()) return;
   try {
     const unread = countUnreadMessages();
-    const icon = trayIcon(unread);
-    tray.setImage(icon);
+    tray.setImage(trayIcon(unread));
     tray.setToolTip(unread ? `Monmail — ${unread} message${unread > 1 ? 's' : ''} non lu${unread > 1 ? 's' : ''}` : 'Monmail — aucun message non lu');
-    if (process.platform === 'win32' && mainWindow && !mainWindow.isDestroyed()) mainWindow.setOverlayIcon(unread ? icon : null, unread ? `${unread} messages non lus` : '');
+    if (process.platform === 'win32' && mainWindow && !mainWindow.isDestroyed()) mainWindow.setOverlayIcon(unread ? unreadBadgeIcon(unread) : null, unread ? `${unread} messages non lus` : '');
   } catch (error) {
     console.warn(`Compteur non lu indisponible : ${error.message}`);
   }
@@ -233,7 +278,7 @@ function createWindow() {
     show: !isSmokeTest,
     backgroundColor: '#f3f5f8',
     title: 'Monmail',
-    icon: trayIcon(0),
+    icon: applicationIcon() || trayIcon(0),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -352,7 +397,7 @@ function openMessageWindow(messageId) {
     minHeight: 450,
     backgroundColor: '#fafbfc',
     title: message.subject || '(Sans objet)',
-    icon: trayIcon(0),
+    icon: applicationIcon() || trayIcon(0),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -412,6 +457,7 @@ app.whenReady().then(async () => {
   if (isSmokeTest) {
     try {
       if (trayIcon(12).isEmpty()) throw new Error('Échec de la génération de l’icône avec compteur non lu.');
+      if (unreadBadgeIcon(12).isEmpty()) throw new Error('Échec de la génération du badge de mails non lus.');
       storeMessage({
         accountId: '__smoke__', remoteId: 'test', folder: 'INBOX',
         subject: 'Test', from: 'Expéditeur <expediteur@exemple.test>', text: 'Test',
@@ -738,6 +784,31 @@ app.whenReady().then(async () => {
     const account = await getAccountWithPassword(accountId);
     return listFolders(account);
   });
+  ipcMain.handle('folders:create', async (_event, accountId, folderPath) => {
+    const account = await getAccountWithPassword(accountId);
+    return createRemoteFolder(account, folderPath);
+  });
+  ipcMain.handle('folders:rename', async (_event, accountId, folderPath, newPath, delimiter) => {
+    const account = await getAccountWithPassword(accountId);
+    const result = await renameRemoteFolder(account, folderPath, newPath);
+    renameAccountFolderMessages(account.id, folderPath, newPath, delimiter);
+    return result;
+  });
+  ipcMain.handle('folders:delete', async (_event, accountId, folderPath, delimiter) => {
+    const account = await getAccountWithPassword(accountId);
+    const separator = String(delimiter || '/');
+    const prefix = `${folderPath}${separator}`;
+    const remoteFolders = await listFolders(account);
+    const paths = remoteFolders
+      .filter((folder) => folder.path === folderPath || folder.path.startsWith(prefix))
+      .map((folder) => folder.path)
+      .sort((left, right) => right.length - left.length);
+    if (!paths.includes(folderPath)) paths.push(folderPath);
+    for (const pathToDelete of paths) await deleteRemoteFolder(account, pathToDelete);
+    deleteAccountFolderMessages(account.id, folderPath, delimiter);
+    updateUnreadBadge();
+    return { deleted: true, folderCount: paths.length };
+  });
   ipcMain.handle('local-folders:list', (event, accountId) => {
     const account = listAccounts().find((item) => item.id === String(accountId || ''));
     if (!account) return [];
@@ -882,6 +953,20 @@ app.whenReady().then(async () => {
     await moveRemoteMessage(account, reference, destination);
     removeLocalMessage(messageId);
     return { moved: true };
+  });
+  ipcMain.handle('messages:copy-remote', async (_event, messageId, destination) => {
+    const reference = getMessageReference(messageId);
+    const account = await getAccountWithPassword(reference.accountId);
+    return copyRemoteMessage(account, reference, destination);
+  });
+  ipcMain.handle('messages:delete-remote', async (_event, messageId) => {
+    const reference = getMessageReference(messageId);
+    if (reference.accountId === '__local__') throw new Error('Ce message est une copie locale.');
+    const account = await getAccountWithPassword(reference.accountId);
+    await deleteRemoteMessage(account, reference);
+    removeLocalMessage(messageId);
+    updateUnreadBadge();
+    return { deleted: true };
   });
   ipcMain.handle('attachments:choose', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender);

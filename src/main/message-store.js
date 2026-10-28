@@ -390,6 +390,33 @@ function listMessages(accountId, folder = 'INBOX', limit = 100) {
   `).all(accountId, folder, Math.min(Math.max(Number(limit) || 100, 1), 500)).map(addConversationKey);
 }
 
+function reconcileRemoteFolderMessages(accountId, folder, activeRemoteIds) {
+  const database = db();
+  const active = new Set(Array.from(activeRemoteIds || [], (value) => String(value)));
+  const staleIds = database.prepare(`
+    SELECT id, remote_id AS remoteId
+      FROM messages
+     WHERE account_id = ? AND folder = ?
+  `).all(String(accountId), String(folder))
+    .filter((message) => !active.has(String(message.remoteId)))
+    .map((message) => message.id);
+  if (!staleIds.length) return { removed: 0 };
+  const deleteAttachments = database.prepare('DELETE FROM attachments WHERE message_id = ?');
+  const deleteMessage = database.prepare('DELETE FROM messages WHERE id = ?');
+  database.exec('BEGIN');
+  try {
+    for (const id of staleIds) {
+      deleteAttachments.run(id);
+      deleteMessage.run(id);
+    }
+    database.exec('COMMIT');
+    return { removed: staleIds.length };
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 function conversationKey(subject) {
   return String(subject || '(sans objet)')
     .replace(/^\s*((re|réf|ref|fw|fwd|tr)\s*:\s*)+/i, '')
@@ -1272,6 +1299,51 @@ function deleteAccountMessages(accountId) {
   }
 }
 
+function renameAccountFolderMessages(accountId, folderPath, newPath, delimiter = '/') {
+  const database = db();
+  const source = String(folderPath || '');
+  const target = String(newPath || '');
+  const prefix = `${source}${delimiter}`;
+  const messages = database.prepare('SELECT id, folder FROM messages WHERE account_id = ?').all(accountId)
+    .filter((message) => message.folder === source || message.folder.startsWith(prefix));
+  const update = database.prepare('UPDATE messages SET folder = ? WHERE id = ?');
+  database.exec('BEGIN');
+  try {
+    for (const message of messages) {
+      const renamedFolder = message.folder === source ? target : `${target}${message.folder.slice(source.length)}`;
+      update.run(renamedFolder, message.id);
+    }
+    database.exec('COMMIT');
+    return { updated: messages.length };
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function deleteAccountFolderMessages(accountId, folderPath, delimiter = '/') {
+  const database = db();
+  const source = String(folderPath || '');
+  const prefix = `${source}${delimiter}`;
+  const ids = database.prepare('SELECT id, folder FROM messages WHERE account_id = ?').all(accountId)
+    .filter((message) => message.folder === source || message.folder.startsWith(prefix))
+    .map((message) => message.id);
+  const deleteAttachments = database.prepare('DELETE FROM attachments WHERE message_id = ?');
+  const deleteMessage = database.prepare('DELETE FROM messages WHERE id = ?');
+  database.exec('BEGIN');
+  try {
+    for (const id of ids) {
+      deleteAttachments.run(id);
+      deleteMessage.run(id);
+    }
+    database.exec('COMMIT');
+    return { deleted: ids.length };
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 function listContacts() {
   return db().prepare(`
     SELECT id, name, email, phone, company, notes,
@@ -1450,6 +1522,7 @@ module.exports = {
   deleteDraft,
   deleteMailRule,
   deleteAccountMessages,
+  deleteAccountFolderMessages,
   copyMessageToLocal,
   copyStoredFolderToLocal,
   copyStoredFolderTreeToLocal,
@@ -1473,7 +1546,9 @@ module.exports = {
   mergeDuplicateContacts,
   moveLocalFolder,
   renameLocalFolder,
+  renameAccountFolderMessages,
   registerLocalEmlFile,
+  reconcileRemoteFolderMessages,
   removeLocalMessage,
   setMessageRead,
   saveContact,

@@ -135,16 +135,22 @@ async function loadMessage() {
   contactActions.className = 'standalone-contact-actions';
   const addContacts = document.createElement('button');
   addContacts.type = 'button';
+  addContacts.className = 'icon-action';
   addContacts.hidden = true;
   const createGroup = document.createElement('button');
   createGroup.type = 'button';
+  createGroup.className = 'icon-action';
   createGroup.hidden = true;
   const updateActions = () => {
     const count = selectedAddresses.size;
     addContacts.hidden = count === 0;
-    addContacts.textContent = `＋ Ajouter aux contacts (${count})`;
+    addContacts.textContent = `♙＋${count}`;
+    addContacts.title = `Ajouter ${count} adresse${count > 1 ? 's' : ''} aux contacts`;
+    addContacts.setAttribute('aria-label', addContacts.title);
     createGroup.hidden = count < 2;
-    createGroup.textContent = `Créer un groupe (${count})`;
+    createGroup.textContent = `♟＋${count}`;
+    createGroup.title = `Créer un groupe avec ${count} adresse${count > 1 ? 's' : ''}`;
+    createGroup.setAttribute('aria-label', createGroup.title);
   };
   addContacts.addEventListener('click', async () => {
     try {
@@ -226,7 +232,7 @@ async function loadMessage() {
       const save = document.createElement('button');
       save.type = 'button';
       save.className = 'attachment-save-button';
-      save.textContent = 'Enregistrer';
+      save.textContent = '⇩';
       save.title = 'Enregistrer la pièce jointe dans un dossier';
       save.addEventListener('click', async () => {
         try {

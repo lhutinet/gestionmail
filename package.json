@@ -35,6 +35,7 @@
       "package.json"
     ],
     "win": {
+      "icon": "src/assets/mail.ico",
       "target": [
         {
           "target": "nsis",

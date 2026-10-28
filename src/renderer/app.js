@@ -22,10 +22,13 @@ const messageList = document.querySelector('#message-list');
 const messageContent = document.querySelector('#message-content');
 const syncButton = document.querySelector('#sync-button');
 const composeButton = document.querySelector('#new-message');
+const trashFolderButton = document.querySelector('#trash-folder-button');
 const composeDialog = document.querySelector('#compose-dialog');
 const composeForm = document.querySelector('#compose-form');
 const composeError = document.querySelector('#compose-error');
 const sendButton = document.querySelector('#send-message');
+const saveDraftButton = document.querySelector('#save-draft');
+const composeDraftStatus = document.querySelector('#compose-draft-status');
 const searchInput = document.querySelector('#message-search');
 const searchScope = document.querySelector('#search-scope');
 const bulkActions = document.querySelector('#bulk-actions');
@@ -117,6 +120,7 @@ let folders = [];
 let localFolders = [];
 let messages = [];
 const selectedMessageIds = new Set();
+let openedMessageId = null;
 const expandedConversationKeys = new Set();
 let globalSearchTimer = null;
 let advancedSearchActive = false;
@@ -247,6 +251,15 @@ document.addEventListener('pointerdown', (event) => {
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') closeContextMenu();
+  if (event.key !== 'Delete' || event.repeat || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+  const target = event.target;
+  if (document.querySelector('dialog[open]') || target?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+  const ids = selectedMessageIds.size ? [...selectedMessageIds] : (openedMessageId ? [openedMessageId] : []);
+  if (!ids.length) return;
+  event.preventDefault();
+  moveMessagesToTrash(ids).catch((error) => {
+    statusLine.textContent = `Suppression impossible : ${readableError(error)}`;
+  });
 });
 window.addEventListener('blur', closeContextMenu);
 window.addEventListener('resize', closeContextMenu);
@@ -561,18 +574,20 @@ function draftPayload() {
 }
 
 async function saveCurrentDraft() {
-  if (suspendDraftAutosave || !composeDialog.open || !selectedAccountId) return;
+  if (suspendDraftAutosave || !composeDialog.open || !selectedAccountId) return null;
   const draft = draftPayload();
   const isAutomaticSignatureOnly = Boolean(composerData.signature) && draft.htmlBody === signatureHtml();
   const hasContent = draft.to || draft.cc || draft.subject.trim() || (!isAutomaticSignatureOnly && draft.body.trim()) || draft.attachments.length;
-  if (!hasContent && !currentDraftId) return;
+  if (!hasContent && !currentDraftId) return null;
   const saved = await window.gestionMail.saveDraft(draft);
   currentDraftId = saved.id;
   await loadDrafts();
+  return saved;
 }
 
 function queueDraftSave() {
   if (suspendDraftAutosave || !composeDialog.open) return;
+  composeDraftStatus.textContent = '';
   clearTimeout(draftSaveTimer);
   draftSaveTimer = setTimeout(() => {
     saveCurrentDraft().catch((error) => {
@@ -889,9 +904,11 @@ function resetContactForm() {
 
 function updateGroupCreationState() {
   createContactGroupButton.disabled = selectedContactIds.size < 2;
-  createContactGroupButton.textContent = selectedContactIds.size
-    ? `Créer un groupe (${selectedContactIds.size})`
+  createContactGroupButton.textContent = selectedContactIds.size ? `♟＋${selectedContactIds.size}` : '♟＋';
+  createContactGroupButton.title = selectedContactIds.size
+    ? `Créer un groupe avec ${selectedContactIds.size} contacts`
     : 'Créer un groupe';
+  createContactGroupButton.setAttribute('aria-label', createContactGroupButton.title);
 }
 
 function closeContactGroupDialog() {
@@ -1491,7 +1508,8 @@ document.querySelector('#compose-spellcheck').addEventListener('click', (event) 
   const enabled = composeBodyEditor.spellcheck !== false;
   composeBodyEditor.spellcheck = !enabled;
   event.currentTarget.classList.toggle('active', !enabled);
-  event.currentTarget.textContent = `Orthographe ${!enabled ? '✓' : '×'}`;
+  event.currentTarget.textContent = `ABC${!enabled ? '✓' : '×'}`;
+  event.currentTarget.title = `Vérification orthographique ${!enabled ? 'activée' : 'désactivée'}`;
   composeBodyEditor.focus();
 });
 document.querySelector('#close-signature').addEventListener('click', () => signatureDialog.close());
@@ -1574,6 +1592,7 @@ async function openComposer(prefill = {}) {
   currentDraftId = prefill.draftId || null;
   renderComposeAttachments();
   composeError.textContent = '';
+  composeDraftStatus.textContent = currentDraftId ? 'Brouillon ouvert' : '';
   composeDialog.showModal();
   suspendDraftAutosave = false;
 }
@@ -1669,7 +1688,7 @@ function toggleFavorite(path) {
 function enableFolderDrag(element, folder) {
   element.draggable = true;
   element.addEventListener('dragstart', (event) => {
-    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.effectAllowed = 'copyMove';
     event.dataTransfer.setData('application/x-gestionmail-folder', JSON.stringify({
       accountId: selectedAccountId,
       path: folder.path,
@@ -1678,8 +1697,200 @@ function enableFolderDrag(element, folder) {
   });
 }
 
+function draggedMessageIds(event) {
+  const encoded = event.dataTransfer.getData('application/x-monmail-message-ids');
+  if (encoded) {
+    try {
+      const ids = JSON.parse(encoded);
+      if (Array.isArray(ids)) return ids.map(String).filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+  const singleId = event.dataTransfer.getData('application/x-gestionmail-message');
+  return singleId ? [singleId] : [];
+}
+
+async function moveDraggedMessagesToServer(messageIds, folder) {
+  if (!activeAccountUsesImap()) throw new Error('Le déplacement par glisser-déposer nécessite un compte IMAP.');
+  const uniqueIds = [...new Set(messageIds)];
+  const selected = uniqueIds.map((id) => messages.find((message) => message.id === id)).filter(Boolean);
+  if (!selected.length) throw new Error('Aucun message à déplacer.');
+  if (selected.some((message) => message.accountId === '__local__')) {
+    throw new Error('Une copie locale ne peut pas être déplacée vers le serveur.');
+  }
+  if (selected.some((message) => message.accountId !== selectedAccountId)) {
+    throw new Error('Les messages doivent appartenir au compte actuellement ouvert.');
+  }
+  const movable = selected.filter((message) => message.folder !== folder.path);
+  if (!movable.length) {
+    statusLine.textContent = `Les messages se trouvent déjà dans « ${folder.name || folder.path} ».`;
+    return;
+  }
+  statusLine.textContent = `Déplacement de ${movable.length} message${movable.length > 1 ? 's' : ''} vers « ${folder.name || folder.path} »…`;
+  let moved = 0;
+  try {
+    for (const message of movable) {
+      await window.gestionMail.moveMessage(message.id, folder.path);
+      moved += 1;
+      selectedMessageIds.delete(message.id);
+    }
+  } finally {
+    if (moved) {
+      const movedIds = new Set(movable.slice(0, moved).map((message) => message.id));
+      messages = messages.filter((message) => !movedIds.has(message.id));
+      updateBulkActions();
+      renderMessages(searchInput.value);
+      resetMessageContent(`${moved} message${moved > 1 ? 's ont' : ' a'} été déplacé${moved > 1 ? 's' : ''}.`);
+    }
+  }
+  statusLine.textContent = `${moved} message${moved > 1 ? 's déplacés' : ' déplacé'} vers « ${folder.name || folder.path} » sur le serveur.`;
+}
+
+function enableServerFolderDrop(element, folder) {
+  element.addEventListener('dragover', (event) => {
+    const types = Array.from(event.dataTransfer.types);
+    const hasMessages = types.includes('application/x-monmail-message-ids');
+    const hasRemoteFolder = types.includes('application/x-gestionmail-folder');
+    if (!activeAccountUsesImap() || (!hasMessages && !hasRemoteFolder)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
+    element.classList.add('server-folder-drag-over');
+  });
+  element.addEventListener('dragleave', (event) => {
+    if (!element.contains(event.relatedTarget)) element.classList.remove('server-folder-drag-over');
+  });
+  element.addEventListener('drop', async (event) => {
+    const ids = draggedMessageIds(event);
+    const encodedFolder = event.dataTransfer.getData('application/x-gestionmail-folder');
+    if (!ids.length && !encodedFolder) return;
+    event.preventDefault();
+    event.stopPropagation();
+    element.classList.remove('server-folder-drag-over');
+    try {
+      if (ids.length) await moveDraggedMessagesToServer(ids, folder);
+      else await moveServerFolderByDrop(JSON.parse(encodedFolder), folder);
+    } catch (error) {
+      statusLine.textContent = `Déplacement impossible : ${readableError(error)}`;
+    }
+  });
+}
+
+function activeAccountUsesImap() {
+  return accounts.find((account) => account.id === selectedAccountId)?.protocol !== 'pop3';
+}
+
+function serverFolderDelimiter(folder = null) {
+  return folder?.delimiter || folders.find((item) => item.delimiter)?.delimiter || '/';
+}
+
+async function reloadServerFolders() {
+  folders = await window.gestionMail.listFolders(selectedAccountId);
+  renderFolders();
+  renderBulkTargets();
+}
+
+async function createServerFolder(parentFolder = null) {
+  if (!activeAccountUsesImap()) throw new Error('La création de dossiers nécessite un compte IMAP.');
+  const delimiter = serverFolderDelimiter(parentFolder);
+  const name = window.prompt(parentFolder
+    ? `Nom du nouveau dossier dans « ${parentFolder.name || parentFolder.path} » :`
+    : 'Nom du nouveau dossier à la racine :');
+  if (name === null) return;
+  const cleanName = name.trim();
+  if (!cleanName) throw new Error('Le nom du dossier est obligatoire.');
+  if (cleanName.includes(delimiter)) throw new Error(`Le nom ne peut pas contenir « ${delimiter} ».`);
+  const folderPath = parentFolder ? `${parentFolder.path}${delimiter}${cleanName}` : cleanName;
+  statusLine.textContent = `Création de « ${folderPath} » sur le serveur…`;
+  await window.gestionMail.createRemoteFolder(selectedAccountId, folderPath);
+  await reloadServerFolders();
+  statusLine.textContent = `Dossier serveur « ${folderPath} » créé.`;
+}
+
+async function renameServerFolder(folder) {
+  if (!activeAccountUsesImap()) throw new Error('Le renommage de dossiers nécessite un compte IMAP.');
+  if (folder.path.toUpperCase() === 'INBOX' || folder.specialUse) throw new Error('Ce dossier système ne peut pas être renommé.');
+  const delimiter = serverFolderDelimiter(folder);
+  const currentName = folder.name || folder.path.split(delimiter).at(-1);
+  const name = window.prompt(`Nouveau nom du dossier « ${currentName} » :`, currentName);
+  if (name === null) return;
+  const cleanName = name.trim();
+  if (!cleanName || cleanName === currentName) return;
+  if (cleanName.includes(delimiter)) throw new Error(`Le nom ne peut pas contenir « ${delimiter} ».`);
+  const separatorIndex = folder.path.lastIndexOf(delimiter);
+  const parentPath = separatorIndex >= 0 ? folder.path.slice(0, separatorIndex + delimiter.length) : '';
+  const newPath = `${parentPath}${cleanName}`;
+  statusLine.textContent = `Renommage de « ${folder.path} » sur le serveur…`;
+  await window.gestionMail.renameRemoteFolder(selectedAccountId, folder.path, newPath, delimiter);
+  await applyServerFolderPathChange(folder, newPath, delimiter);
+  statusLine.textContent = `Dossier serveur renommé en « ${cleanName} ».`;
+}
+
+async function applyServerFolderPathChange(folder, newPath, delimiter) {
+  const prefix = `${folder.path}${delimiter}`;
+  const favorites = favoritePaths().map((path) => {
+    if (path === folder.path) return newPath;
+    if (path.startsWith(prefix)) return `${newPath}${path.slice(folder.path.length)}`;
+    return path;
+  });
+  localStorage.setItem(favoriteStorageKey(), JSON.stringify(favorites));
+  const selectedWasRenamed = selectedFolder === folder.path || selectedFolder.startsWith(prefix);
+  if (selectedWasRenamed) {
+    selectedFolder = `${newPath}${selectedFolder.slice(folder.path.length)}`;
+    localStorage.setItem(lastFolderStorageKey(selectedAccountId), selectedFolder);
+  }
+  await reloadServerFolders();
+  if (selectedWasRenamed) await selectFolder(selectedFolder, false);
+}
+
+async function moveServerFolderByDrop(sourceData, targetFolder = null) {
+  if (!activeAccountUsesImap()) throw new Error('Le déplacement de dossiers nécessite un compte IMAP.');
+  if (sourceData.accountId !== selectedAccountId) throw new Error('Le dossier appartient à un autre compte.');
+  const sourceFolder = folders.find((folder) => folder.path === sourceData.path);
+  if (!sourceFolder) throw new Error('Dossier source introuvable.');
+  if (sourceFolder.path.toUpperCase() === 'INBOX' || sourceFolder.specialUse) {
+    throw new Error('Un dossier système ne peut pas être déplacé.');
+  }
+  const delimiter = serverFolderDelimiter(sourceFolder);
+  const sourcePrefix = `${sourceFolder.path}${delimiter}`;
+  if (targetFolder && (targetFolder.path === sourceFolder.path || targetFolder.path.startsWith(sourcePrefix))) {
+    throw new Error('Un dossier ne peut pas être déplacé dans lui-même ou dans un de ses sous-dossiers.');
+  }
+  const leafName = sourceFolder.path.split(delimiter).filter(Boolean).at(-1);
+  const newPath = targetFolder ? `${targetFolder.path}${delimiter}${leafName}` : leafName;
+  if (newPath === sourceFolder.path) return;
+  const destinationLabel = targetFolder ? `« ${targetFolder.name || targetFolder.path} »` : 'la racine';
+  statusLine.textContent = `Déplacement de « ${sourceFolder.name || sourceFolder.path} » dans ${destinationLabel}…`;
+  await window.gestionMail.renameRemoteFolder(selectedAccountId, sourceFolder.path, newPath, delimiter);
+  await applyServerFolderPathChange(sourceFolder, newPath, delimiter);
+  statusLine.textContent = `Dossier déplacé dans ${destinationLabel} sur le serveur.`;
+}
+
+async function deleteServerFolder(folder) {
+  if (!activeAccountUsesImap()) throw new Error('La suppression de dossiers nécessite un compte IMAP.');
+  if (folder.path.toUpperCase() === 'INBOX' || folder.specialUse) throw new Error('Ce dossier système ne peut pas être supprimé.');
+  if (!window.confirm(`Supprimer « ${folder.name || folder.path} » de la boîte mail d’origine ?\n\nSes messages et ses éventuels sous-dossiers seront supprimés du serveur. Cette action peut être définitive.`)) return;
+  const delimiter = serverFolderDelimiter(folder);
+  statusLine.textContent = `Suppression de « ${folder.path} » sur le serveur…`;
+  await window.gestionMail.deleteRemoteFolder(selectedAccountId, folder.path, delimiter);
+  const prefix = `${folder.path}${delimiter}`;
+  const favorites = favoritePaths().filter((path) => path !== folder.path && !path.startsWith(prefix));
+  localStorage.setItem(favoriteStorageKey(), JSON.stringify(favorites));
+  const wasSelected = selectedFolder === folder.path || selectedFolder.startsWith(prefix);
+  if (wasSelected) {
+    selectedFolder = 'INBOX';
+    localStorage.setItem(lastFolderStorageKey(selectedAccountId), 'INBOX');
+  }
+  await reloadServerFolders();
+  if (wasSelected) await selectFolder('INBOX', false);
+  statusLine.textContent = `Dossier serveur « ${folder.name || folder.path} » supprimé.`;
+}
+
 function showServerFolderContextMenu(event, folder) {
   const isFavorite = favoritePaths().includes(folder.path);
+  const protectedFolder = folder.path.toUpperCase() === 'INBOX' || Boolean(folder.specialUse);
+  const imapEnabled = activeAccountUsesImap();
   showContextMenu(event, [
     { label: 'Ouvrir le dossier', action: () => selectFolder(folder.path) },
     {
@@ -1691,9 +1902,43 @@ function showServerFolderContextMenu(event, folder) {
     },
     { label: isFavorite ? 'Retirer des favoris' : 'Ajouter aux favoris', action: () => toggleFavorite(folder.path) },
     { separator: true },
+    { label: 'Créer un sous-dossier…', disabled: !imapEnabled, action: () => createServerFolder(folder) },
+    { label: 'Créer un dossier à la racine…', disabled: !imapEnabled, action: () => createServerFolder() },
+    { label: 'Renommer sur le serveur…', disabled: !imapEnabled || protectedFolder, action: () => renameServerFolder(folder) },
+    { label: 'Supprimer du serveur…', disabled: !imapEnabled || protectedFolder, danger: true, action: () => deleteServerFolder(folder) },
+    { separator: true },
     { label: 'Copier le dossier complet en local…', action: () => copyRemoteFolderTree({ accountId: selectedAccountId, path: folder.path, name: folder.name || folder.path }) }
   ]);
 }
+
+folderList.addEventListener('contextmenu', (event) => {
+  if (event.target !== folderList) return;
+  showContextMenu(event, [
+    { label: 'Créer un dossier sur le serveur…', disabled: !activeAccountUsesImap(), action: () => createServerFolder() }
+  ]);
+});
+folderList.addEventListener('dragover', (event) => {
+  if (event.target !== folderList || !activeAccountUsesImap()) return;
+  if (!Array.from(event.dataTransfer.types).includes('application/x-gestionmail-folder')) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  folderList.classList.add('server-folder-root-drag-over');
+});
+folderList.addEventListener('dragleave', (event) => {
+  if (event.target === folderList) folderList.classList.remove('server-folder-root-drag-over');
+});
+folderList.addEventListener('drop', async (event) => {
+  if (event.target !== folderList) return;
+  const encodedFolder = event.dataTransfer.getData('application/x-gestionmail-folder');
+  if (!encodedFolder) return;
+  event.preventDefault();
+  folderList.classList.remove('server-folder-root-drag-over');
+  try {
+    await moveServerFolderByDrop(JSON.parse(encodedFolder), null);
+  } catch (error) {
+    statusLine.textContent = `Déplacement impossible : ${readableError(error)}`;
+  }
+});
 
 function renderFavorites() {
   favoriteList.replaceChildren();
@@ -1715,6 +1960,7 @@ function renderFavorites() {
     item.addEventListener('click', () => selectFolder(folder.path));
     item.addEventListener('contextmenu', (event) => showServerFolderContextMenu(event, folder));
     enableFolderDrag(item, folder);
+    enableServerFolderDrop(item, folder);
     favoriteList.append(item);
   }
 }
@@ -1768,6 +2014,7 @@ function appendFolderNodes(container, nodes, depth = 0) {
       item.addEventListener('click', () => selectFolder(node.path));
       item.addEventListener('contextmenu', (event) => showServerFolderContextMenu(event, node));
       enableFolderDrag(item, node);
+      enableServerFolderDrop(row, node);
     }
     const favorite = document.createElement('button');
     favorite.type = 'button';
@@ -1791,6 +2038,10 @@ function renderFolders() {
   folderList.replaceChildren();
   appendFolderNodes(folderList, folderTree());
   renderFavorites();
+  const trashFolder = folders.find((folder) => /trash/i.test(folder.specialUse || '') || /corbeille|trash/i.test(folder.name || ''));
+  trashFolderButton.disabled = !selectedAccountId || !trashFolder;
+  trashFolderButton.title = trashFolder ? `Ouvrir ${trashFolder.name || 'la corbeille'}` : 'Aucun dossier Corbeille détecté';
+  trashFolderButton.setAttribute('aria-label', trashFolderButton.title);
 }
 
 function localFolderTree() {
@@ -2071,6 +2322,48 @@ function selectedMessages() {
   return messages.filter((message) => selectedMessageIds.has(message.id));
 }
 
+async function moveMessagesToTrash(messageIds, { confirmPermanent = true } = {}) {
+  const ids = [...new Set(messageIds.map(String))];
+  const targets = ids.map((id) => messages.find((message) => message.id === id)).filter(Boolean);
+  if (!targets.length) throw new Error('Aucun message à supprimer.');
+  const localMessages = targets.filter((message) => message.accountId === '__local__');
+  const remoteMessages = targets.filter((message) => message.accountId !== '__local__');
+  if (remoteMessages.some((message) => message.accountId !== selectedAccountId)) {
+    throw new Error('Les messages doivent appartenir au compte actuellement ouvert.');
+  }
+  const trashFolder = folders.find((folder) => /trash/i.test(folder.specialUse || '') || /corbeille|trash/i.test(folder.name || ''));
+  if (remoteMessages.length && !trashFolder) throw new Error('Aucun dossier Corbeille détecté pour ce compte.');
+  const alreadyInTrash = remoteMessages.filter((message) => message.folder === trashFolder?.path);
+  const toTrash = remoteMessages.filter((message) => message.folder !== trashFolder?.path);
+  if (localMessages.length && !window.confirm(`Supprimer définitivement ${localMessages.length} copie${localMessages.length > 1 ? 's' : ''} locale${localMessages.length > 1 ? 's' : ''} ?`)) return;
+  if (alreadyInTrash.length && confirmPermanent && !window.confirm(`Supprimer définitivement ${alreadyInTrash.length} message${alreadyInTrash.length > 1 ? 's' : ''} déjà présent${alreadyInTrash.length > 1 ? 's' : ''} dans la corbeille ?`)) return;
+  statusLine.textContent = 'Déplacement vers la corbeille…';
+  let processed = 0;
+  try {
+    for (const message of localMessages) {
+      await window.gestionMail.deleteLocalMessage(message.id);
+      processed += 1;
+    }
+    for (const message of toTrash) {
+      await window.gestionMail.moveMessage(message.id, trashFolder.path);
+      processed += 1;
+    }
+    for (const message of alreadyInTrash) {
+      if (!confirmPermanent) continue;
+      await window.gestionMail.deleteRemoteMessage(message.id);
+      processed += 1;
+    }
+  } finally {
+    for (const id of ids) selectedMessageIds.delete(id);
+    if (ids.includes(openedMessageId)) openedMessageId = null;
+    await refreshCurrentMessageList();
+    updateBulkActions();
+    if (processed) resetMessageContent(processed > 1 ? `${processed} messages ont été traités.` : 'Le message a été déplacé ou supprimé.');
+  }
+  const ignored = alreadyInTrash.length && !confirmPermanent ? alreadyInTrash.length : 0;
+  statusLine.textContent = `${processed} message${processed > 1 ? 's traités' : ' traité'}${ignored ? ` — ${ignored} déjà dans la corbeille` : ''}.`;
+}
+
 function renderBulkTargets() {
   bulkTarget.replaceChildren();
   const serverGroup = document.createElement('optgroup');
@@ -2162,8 +2455,12 @@ function renderMessages(filter = '') {
     row.dataset.id = message.id;
     row.draggable = true;
     row.addEventListener('dragstart', (event) => {
-      event.dataTransfer.effectAllowed = 'copy';
+      const draggedIds = selectedMessageIds.has(message.id)
+        ? [...selectedMessageIds]
+        : [message.id];
+      event.dataTransfer.effectAllowed = viewingLocal ? 'copy' : 'copyMove';
       event.dataTransfer.setData('application/x-gestionmail-message', message.id);
+      event.dataTransfer.setData('application/x-monmail-message-ids', JSON.stringify(draggedIds));
       event.dataTransfer.setData('text/plain', message.subject || '(Sans objet)');
       row.classList.add('dragging');
     });
@@ -2218,6 +2515,7 @@ function renderMessages(filter = '') {
 }
 
 function resetMessageContent(text = 'Sélectionnez un message pour le lire.') {
+  openedMessageId = null;
   messageContent.replaceChildren();
   const placeholder = document.createElement('div');
   placeholder.className = 'message-placeholder';
@@ -2245,8 +2543,47 @@ async function moveDisplayedMessage(message, destination, label, needsConfirmati
   }
 }
 
+function chooseServerDestination(message, actionLabel) {
+  const available = folders.filter((folder) => folder.selectable !== false && folder.path !== message.folder);
+  if (!available.length) throw new Error('Aucun autre dossier serveur disponible.');
+  const choices = available.map((folder, index) => `${index + 1}. ${folder.name || folder.path}`).join('\n');
+  const answer = window.prompt(`${actionLabel} : indiquez le numéro du dossier.\n\n${choices}`);
+  if (answer === null) return null;
+  const index = Number(answer) - 1;
+  if (!Number.isInteger(index) || !available[index]) throw new Error('Numéro de dossier invalide.');
+  return available[index];
+}
+
+async function copyDisplayedRemoteMessage(message) {
+  const destination = chooseServerDestination(message, 'Copier le message sur le serveur');
+  if (!destination) return;
+  statusLine.textContent = `Copie vers « ${destination.name || destination.path} » en cours…`;
+  await window.gestionMail.copyRemoteMessage(message.id, destination.path);
+  statusLine.textContent = `Message copié sur le serveur dans « ${destination.name || destination.path} ».`;
+}
+
+async function moveDisplayedRemoteMessage(message) {
+  const destination = chooseServerDestination(message, 'Déplacer le message sur le serveur');
+  if (!destination) return;
+  await moveDisplayedMessage(message, destination.path, `Déplacé vers « ${destination.name || destination.path} »`);
+}
+
+async function deleteDisplayedRemoteMessage(message) {
+  if (!window.confirm(`Supprimer définitivement « ${message.subject || '(Sans objet)'} » de la boîte mail d’origine ?\n\nLe message sera supprimé du serveur et disparaîtra également des autres appareils.`)) return;
+  statusLine.textContent = 'Suppression définitive sur le serveur…';
+  await window.gestionMail.deleteRemoteMessage(message.id);
+  messages = messages.filter((item) => item.id !== message.id);
+  selectedMessageIds.delete(message.id);
+  updateBulkActions();
+  renderMessages(searchInput.value);
+  resetMessageContent('Le message a été supprimé de la boîte mail d’origine.');
+  statusLine.textContent = 'Message supprimé définitivement du serveur.';
+}
+
 function showMessageContextMenu(event, message, row) {
   const isLocalMessage = message.accountId === '__local__';
+  const messageAccount = accounts.find((account) => account.id === message.accountId);
+  const canEditServer = !isLocalMessage && messageAccount?.protocol !== 'pop3';
   const archiveFolder = folders.find((folder) => /archive/i.test(folder.specialUse || '') || /archive/i.test(folder.name || ''));
   const trashFolder = folders.find((folder) => /trash/i.test(folder.specialUse || '') || /corbeille|trash/i.test(folder.name || ''));
   showContextMenu(event, [
@@ -2268,8 +2605,11 @@ function showMessageContextMenu(event, message, row) {
     },
     { separator: true },
     { label: 'Conserver une copie en local…', hidden: isLocalMessage, action: () => openCopyLocalDialog(message) },
+    { label: 'Copier vers un dossier du serveur…', hidden: isLocalMessage, disabled: !canEditServer, action: () => copyDisplayedRemoteMessage(message) },
+    { label: 'Déplacer vers un dossier du serveur…', hidden: isLocalMessage, disabled: !canEditServer, action: () => moveDisplayedRemoteMessage(message) },
     { label: 'Archiver', hidden: isLocalMessage, disabled: !archiveFolder || archiveFolder.path === selectedFolder, action: () => moveDisplayedMessage(message, archiveFolder?.path, 'Archivé') },
     { label: 'Placer dans la corbeille…', hidden: isLocalMessage, disabled: !trashFolder || trashFolder.path === selectedFolder, danger: true, action: () => moveDisplayedMessage(message, trashFolder?.path, 'Déplacé dans la corbeille', true) },
+    { label: 'Supprimer définitivement du serveur…', hidden: isLocalMessage, disabled: !canEditServer, danger: true, action: () => deleteDisplayedRemoteMessage(message) },
     {
       label: 'Ouvrir son dossier Windows',
       hidden: !isLocalMessage,
@@ -2368,7 +2708,8 @@ async function synchroniseCurrentFolder(automatic = false) {
   const syncingAccountId = selectedAccountId;
   const syncingFolder = selectedFolder;
   syncButton.disabled = true;
-  syncButton.textContent = 'Synchronisation…';
+  syncButton.textContent = '◌';
+  syncButton.title = 'Synchronisation en cours…';
   if (!automatic) statusLine.textContent = 'Connexion au serveur entrant…';
   const previousIds = new Set(messages.map((message) => message.id));
   try {
@@ -2384,13 +2725,14 @@ async function synchroniseCurrentFolder(automatic = false) {
         : `${newMessages.length} nouveaux messages dans ${syncingFolder}`;
       await window.gestionMail.showNotification('Nouveau message', body);
     }
-    statusLine.textContent = `${result.imported} message${result.imported > 1 ? 's' : ''} vérifié${result.imported > 1 ? 's' : ''} — ${result.total} sur le serveur${result.sorted ? ` — ${result.sorted} trié${result.sorted > 1 ? 's' : ''} automatiquement` : ''}${automatic ? ' — actualisation automatique' : ''}`;
+    statusLine.textContent = `${result.imported} message${result.imported > 1 ? 's' : ''} vérifié${result.imported > 1 ? 's' : ''} — ${result.total} sur le serveur${result.removed ? ` — ${result.removed} ancien${result.removed > 1 ? 's' : ''} retiré${result.removed > 1 ? 's' : ''} du cache` : ''}${result.sorted ? ` — ${result.sorted} trié${result.sorted > 1 ? 's' : ''} automatiquement` : ''}${automatic ? ' — actualisation automatique' : ''}`;
   } catch (error) {
     statusLine.textContent = `Échec${automatic ? ' de l’actualisation automatique' : ''} : ${readableError(error)}`;
   } finally {
     syncInProgress = false;
     syncButton.disabled = !selectedAccountId || viewingLocal;
-    syncButton.textContent = '↻ Actualiser';
+    syncButton.textContent = '↻';
+    syncButton.title = 'Actualiser';
   }
 }
 
@@ -2534,6 +2876,7 @@ async function deleteDisplayedLocalMessage(message) {
 async function openMessage(messageId, row) {
   try {
     const message = await window.gestionMail.getMessage(messageId);
+    openedMessageId = messageId;
     document.querySelectorAll('.message-row').forEach((item) => item.classList.remove('active'));
     row.classList.add('active');
     row.classList.remove('unread');
@@ -2544,8 +2887,10 @@ async function openMessage(messageId, row) {
     actions.className = 'message-actions';
     const reply = document.createElement('button');
     reply.type = 'button';
-    reply.className = 'secondary';
-    reply.textContent = '↩ Répondre';
+    reply.className = 'secondary icon-action';
+    reply.textContent = '↩';
+    reply.title = 'Répondre';
+    reply.setAttribute('aria-label', 'Répondre');
     reply.disabled = !selectedAccountId;
     reply.addEventListener('click', () => openComposer({
       to: extractEmail(message.sender),
@@ -2554,8 +2899,10 @@ async function openMessage(messageId, row) {
     }));
     const forward = document.createElement('button');
     forward.type = 'button';
-    forward.className = 'secondary';
-    forward.textContent = '→ Transférer';
+    forward.className = 'secondary icon-action';
+    forward.textContent = '→';
+    forward.title = 'Transférer';
+    forward.setAttribute('aria-label', 'Transférer');
     forward.disabled = !selectedAccountId;
     forward.addEventListener('click', () => openComposer({
       subject: prefixedSubject('Tr', message.subject),
@@ -2563,8 +2910,10 @@ async function openMessage(messageId, row) {
     }));
     const markUnread = document.createElement('button');
     markUnread.type = 'button';
-    markUnread.className = 'secondary';
-    markUnread.textContent = '● Marquer non lu';
+    markUnread.className = 'secondary icon-action';
+    markUnread.textContent = '●';
+    markUnread.title = 'Marquer comme non lu';
+    markUnread.setAttribute('aria-label', 'Marquer comme non lu');
     markUnread.addEventListener('click', async () => {
       try {
         await window.gestionMail.setMessageRead(message.id, false);
@@ -2580,18 +2929,22 @@ async function openMessage(messageId, row) {
     const selectedHeaderAddresses = new Map();
     const addSelectedContacts = document.createElement('button');
     addSelectedContacts.type = 'button';
-    addSelectedContacts.className = 'secondary';
+    addSelectedContacts.className = 'secondary icon-action';
     addSelectedContacts.hidden = true;
     const createGroupFromMessage = document.createElement('button');
     createGroupFromMessage.type = 'button';
-    createGroupFromMessage.className = 'secondary';
+    createGroupFromMessage.className = 'secondary icon-action';
     createGroupFromMessage.hidden = true;
     const updateAddressActions = () => {
       const count = selectedHeaderAddresses.size;
       addSelectedContacts.hidden = count === 0;
-      addSelectedContacts.textContent = `＋ Ajouter aux contacts (${count})`;
+      addSelectedContacts.textContent = `♙＋${count}`;
+      addSelectedContacts.title = `Ajouter ${count} adresse${count > 1 ? 's' : ''} aux contacts`;
+      addSelectedContacts.setAttribute('aria-label', addSelectedContacts.title);
       createGroupFromMessage.hidden = count < 2;
-      createGroupFromMessage.textContent = `Créer un groupe (${count})`;
+      createGroupFromMessage.textContent = `♟＋${count}`;
+      createGroupFromMessage.title = `Créer un groupe avec ${count} adresse${count > 1 ? 's' : ''}`;
+      createGroupFromMessage.setAttribute('aria-label', createGroupFromMessage.title);
     };
     addSelectedContacts.addEventListener('click', async () => {
       try {
@@ -2625,15 +2978,19 @@ async function openMessage(messageId, row) {
     if (viewingLocal) {
       const removeLocal = document.createElement('button');
       removeLocal.type = 'button';
-      removeLocal.className = 'secondary danger-action';
-      removeLocal.textContent = '⌫ Supprimer la copie locale';
+      removeLocal.className = 'secondary danger-action icon-action';
+      removeLocal.textContent = '⌫';
+      removeLocal.title = 'Supprimer la copie locale';
+      removeLocal.setAttribute('aria-label', 'Supprimer la copie locale');
       removeLocal.addEventListener('click', () => deleteDisplayedLocalMessage(message));
       actions.append(removeLocal);
     } else {
       const copyLocal = document.createElement('button');
       copyLocal.type = 'button';
-      copyLocal.className = 'secondary';
-      copyLocal.textContent = '↓ Conserver en local';
+      copyLocal.className = 'secondary icon-action';
+      copyLocal.textContent = '↓';
+      copyLocal.title = 'Conserver en local';
+      copyLocal.setAttribute('aria-label', 'Conserver en local');
       copyLocal.addEventListener('click', () => openCopyLocalDialog(message));
       actions.append(copyLocal);
     }
@@ -2642,17 +2999,19 @@ async function openMessage(messageId, row) {
       const trashFolder = specialFolder('\\Trash');
       const archive = document.createElement('button');
       archive.type = 'button';
-      archive.className = 'secondary';
-      archive.textContent = '▣ Archiver';
+      archive.className = 'secondary icon-action';
+      archive.textContent = '▣';
       archive.disabled = !archiveFolder || archiveFolder.path === selectedFolder;
       archive.title = archiveFolder ? `Déplacer vers ${archiveFolder.name}` : 'Aucun dossier d’archives détecté';
+      archive.setAttribute('aria-label', archive.title);
       archive.addEventListener('click', () => moveDisplayedMessage(message, archiveFolder?.path, 'Archivé'));
       const trash = document.createElement('button');
       trash.type = 'button';
-      trash.className = 'secondary danger-action';
-      trash.textContent = '⌫ Corbeille';
+      trash.className = 'secondary danger-action icon-action';
+      trash.textContent = '⌫';
       trash.disabled = !trashFolder || trashFolder.path === selectedFolder;
       trash.title = trashFolder ? `Déplacer vers ${trashFolder.name}` : 'Aucun dossier de corbeille détecté';
+      trash.setAttribute('aria-label', trash.title);
       trash.addEventListener('click', () => moveDisplayedMessage(message, trashFolder?.path, 'Déplacé dans la corbeille', true));
       actions.append(archive, trash);
     }
@@ -2712,7 +3071,7 @@ async function openMessage(messageId, row) {
         const save = document.createElement('button');
         save.type = 'button';
         save.className = 'attachment-save-button';
-        save.textContent = 'Enregistrer';
+        save.textContent = '⇩';
         save.title = 'Enregistrer la pièce jointe dans un dossier';
         save.addEventListener('click', async () => {
           try {
@@ -2876,6 +3235,21 @@ autoSyncSelect.addEventListener('change', async () => {
 
 composeButton.addEventListener('click', () => openComposer());
 composeForm.addEventListener('input', queueDraftSave);
+saveDraftButton.addEventListener('click', async () => {
+  clearTimeout(draftSaveTimer);
+  saveDraftButton.disabled = true;
+  composeDraftStatus.textContent = 'Enregistrement…';
+  composeError.textContent = '';
+  try {
+    const saved = await saveCurrentDraft();
+    composeDraftStatus.textContent = saved ? 'Brouillon enregistré' : 'Ajoutez du contenu au message';
+  } catch (error) {
+    composeDraftStatus.textContent = '';
+    composeError.textContent = `Impossible d’enregistrer le brouillon : ${readableError(error)}`;
+  } finally {
+    saveDraftButton.disabled = false;
+  }
+});
 document.querySelector('#close-compose').addEventListener('click', async () => {
   clearTimeout(draftSaveTimer);
   try {
@@ -2895,6 +3269,7 @@ document.querySelector('#cancel-compose').addEventListener('click', async () => 
   resetComposeBody();
   composeAttachments = [];
   renderComposeAttachments();
+  composeDraftStatus.textContent = '';
   composeDialog.close();
   await loadDrafts().catch(() => undefined);
 });
@@ -2971,6 +3346,35 @@ document.querySelector('#drafts-button').addEventListener('click', async () => {
     renderDrafts();
   } catch (error) {
     statusLine.textContent = `Impossible d’ouvrir les brouillons : ${readableError(error)}`;
+  }
+});
+trashFolderButton.addEventListener('click', async () => {
+  const trashFolder = folders.find((folder) => /trash/i.test(folder.specialUse || '') || /corbeille|trash/i.test(folder.name || ''));
+  if (!trashFolder) {
+    statusLine.textContent = 'Aucun dossier Corbeille détecté pour ce compte.';
+    return;
+  }
+  await selectFolder(trashFolder.path);
+});
+trashFolderButton.addEventListener('dragover', (event) => {
+  const types = Array.from(event.dataTransfer.types);
+  if (trashFolderButton.disabled || (!types.includes('application/x-monmail-message-ids') && !types.includes('application/x-gestionmail-message'))) return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.dataTransfer.dropEffect = 'move';
+  trashFolderButton.classList.add('mail-drag-over');
+});
+trashFolderButton.addEventListener('dragleave', () => trashFolderButton.classList.remove('mail-drag-over'));
+trashFolderButton.addEventListener('drop', async (event) => {
+  const ids = draggedMessageIds(event);
+  if (!ids.length) return;
+  event.preventDefault();
+  event.stopPropagation();
+  trashFolderButton.classList.remove('mail-drag-over');
+  try {
+    await moveMessagesToTrash(ids, { confirmPermanent: false });
+  } catch (error) {
+    statusLine.textContent = `Déplacement vers la corbeille impossible : ${readableError(error)}`;
   }
 });
 document.querySelector('#close-drafts').addEventListener('click', () => draftsDialog.close());
@@ -3302,6 +3706,7 @@ composeForm.addEventListener('submit', async (event) => {
     resetComposeBody();
     composeAttachments = [];
     renderComposeAttachments();
+    composeDraftStatus.textContent = '';
     await Promise.all([loadDrafts(), loadLocalFolders()]);
     composeDialog.close();
     statusLine.textContent = 'Message envoyé et copie conservée dans « Envoyés ».';
@@ -3365,17 +3770,7 @@ document.querySelector('#bulk-trash').addEventListener('click', async () => {
   const selected = selectedMessages();
   if (!selected.length) return;
   try {
-    if (selected.every((message) => message.accountId === '__local__')) {
-      if (!window.confirm(`Supprimer définitivement ${selected.length} message${selected.length > 1 ? 's' : ''} local${selected.length > 1 ? 'aux' : ''} ?`)) return;
-      for (const message of selected) await window.gestionMail.deleteLocalMessage(message.id);
-    } else {
-      const trash = folders.find((folder) => /trash/i.test(folder.specialUse || '') || /corbeille|trash/i.test(folder.name || ''));
-      if (!trash) throw new Error('Aucun dossier Corbeille détecté pour ce compte.');
-      for (const message of selected) await window.gestionMail.moveMessage(message.id, trash.path);
-    }
-    selectedMessageIds.clear();
-    await refreshCurrentMessageList();
-    updateBulkActions();
+    await moveMessagesToTrash(selected.map((message) => message.id));
   } catch (error) {
     statusLine.textContent = `Suppression impossible : ${readableError(error)}`;
   }
