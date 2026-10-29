@@ -3,12 +3,37 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { app } = require('electron');
 
-function todoPaths() {
-  const directory = app.getPath('userData');
+function todoPaths(localDirectory = '') {
+  const directory = localDirectory ? path.resolve(String(localDirectory)) : app.getPath('userData');
   return {
     json: path.join(directory, 'todos.json'),
     markdown: path.join(directory, 'TODO.md')
   };
+}
+
+function migrationStatePath() {
+  return path.join(app.getPath('userData'), 'todo-migrations.json');
+}
+
+function migrationKey(directory) {
+  return path.resolve(directory).toLocaleLowerCase('fr');
+}
+
+function readMigrationState() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(migrationStatePath(), 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function markMigrationComplete(directory) {
+  const state = readMigrationState();
+  state[migrationKey(directory)] = new Date().toISOString();
+  const filename = migrationStatePath();
+  fs.mkdirSync(path.dirname(filename), { recursive: true });
+  fs.writeFileSync(filename, JSON.stringify(state, null, 2), 'utf8');
 }
 
 function initialTodos() {
@@ -44,8 +69,8 @@ function normaliseTodo(todo, existing = null) {
   };
 }
 
-function writeTodos(todos) {
-  const paths = todoPaths();
+function writeTodos(todos, localDirectory = '') {
+  const paths = todoPaths(localDirectory);
   fs.mkdirSync(path.dirname(paths.json), { recursive: true });
   const temporaryPath = `${paths.json}.tmp`;
   fs.writeFileSync(temporaryPath, JSON.stringify(todos, null, 2), 'utf8');
@@ -62,32 +87,70 @@ function writeTodos(todos) {
   return todos;
 }
 
-function listTodos() {
-  const paths = todoPaths();
+function readTodoFile(filename) {
   try {
-    const parsed = JSON.parse(fs.readFileSync(paths.json, 'utf8'));
+    const parsed = JSON.parse(fs.readFileSync(filename, 'utf8'));
     if (!Array.isArray(parsed)) throw new Error('Format invalide');
-    return parsed.map((todo) => normaliseTodo(todo, todo));
+    return parsed.map((todo) => ({
+      ...normaliseTodo(todo, todo),
+      updatedAt: todo.updatedAt || new Date().toISOString()
+    }));
   } catch {
-    return writeTodos(initialTodos());
+    return null;
   }
 }
 
-function saveTodo(todo) {
-  const todos = listTodos();
+function mergeTodos(current, legacy) {
+  const merged = [...current];
+  const identities = new Map();
+  const identity = (todo) => `${String(todo.title).trim().toLocaleLowerCase('fr')}\u0000${String(todo.category).trim().toLocaleLowerCase('fr')}`;
+  merged.forEach((todo, index) => {
+    identities.set(`id:${todo.id}`, index);
+    identities.set(`text:${identity(todo)}`, index);
+  });
+  for (const todo of legacy) {
+    const index = identities.get(`id:${todo.id}`) ?? identities.get(`text:${identity(todo)}`);
+    if (index === undefined) {
+      identities.set(`id:${todo.id}`, merged.length);
+      identities.set(`text:${identity(todo)}`, merged.length);
+      merged.push(todo);
+    } else if (String(todo.updatedAt || '') > String(merged[index].updatedAt || '')) {
+      merged[index] = { ...todo, id: merged[index].id };
+    }
+  }
+  return merged;
+}
+
+function listTodos(localDirectory = '') {
+  const paths = todoPaths(localDirectory);
+  let todos = readTodoFile(paths.json);
+  const legacyPaths = todoPaths();
+  const usesSharedDirectory = path.resolve(paths.json) !== path.resolve(legacyPaths.json);
+  if (usesSharedDirectory && !readMigrationState()[migrationKey(path.dirname(paths.json))]) {
+    const legacyTodos = readTodoFile(legacyPaths.json);
+    if (legacyTodos?.length) todos = mergeTodos(todos || [], legacyTodos);
+    markMigrationComplete(path.dirname(paths.json));
+    if (todos) return writeTodos(todos, localDirectory);
+  }
+  if (todos) return todos;
+  return writeTodos(initialTodos(), localDirectory);
+}
+
+function saveTodo(todo, localDirectory = '') {
+  const todos = listTodos(localDirectory);
   const index = todos.findIndex((item) => item.id === todo?.id);
   const saved = normaliseTodo(todo, index >= 0 ? todos[index] : null);
   if (index >= 0) todos[index] = saved;
   else todos.push(saved);
-  writeTodos(todos);
+  writeTodos(todos, localDirectory);
   return saved;
 }
 
-function deleteTodo(todoId) {
-  const todos = listTodos();
+function deleteTodo(todoId, localDirectory = '') {
+  const todos = listTodos(localDirectory);
   const remaining = todos.filter((todo) => todo.id !== String(todoId));
   if (remaining.length === todos.length) throw new Error('Tâche introuvable.');
-  writeTodos(remaining);
+  writeTodos(remaining, localDirectory);
   return { deleted: true };
 }
 

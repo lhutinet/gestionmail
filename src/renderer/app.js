@@ -453,7 +453,7 @@ function renderTodos() {
     checkbox.checked = todo.done;
     checkbox.addEventListener('change', async () => {
       try {
-        const saved = await window.gestionMail.saveTodo({ ...todo, done: checkbox.checked });
+        const saved = await window.gestionMail.saveTodo(selectedAccountId, { ...todo, done: checkbox.checked });
         todos = todos.map((item) => item.id === saved.id ? saved : item);
         updateTodoCount();
         renderTodos();
@@ -479,7 +479,7 @@ function renderTodos() {
     remove.title = 'Supprimer la tâche';
     remove.addEventListener('click', async () => {
       try {
-        await window.gestionMail.deleteTodo(todo.id);
+        await window.gestionMail.deleteTodo(selectedAccountId, todo.id);
         todos = todos.filter((item) => item.id !== todo.id);
         updateTodoCount();
         renderTodos();
@@ -493,7 +493,7 @@ function renderTodos() {
 }
 
 async function loadTodos() {
-  todos = await window.gestionMail.listTodos();
+  todos = await window.gestionMail.listTodos(selectedAccountId);
   updateTodoCount();
   if (todoDialog.open) renderTodos();
 }
@@ -1685,6 +1685,64 @@ function toggleFavorite(path) {
   renderFolders();
 }
 
+function saveFavoriteOrder(paths) {
+  localStorage.setItem(favoriteStorageKey(), JSON.stringify(paths));
+}
+
+function reorderFavorite(sourcePath, targetPath = null, afterTarget = false) {
+  const favorites = favoritePaths();
+  if (!favorites.includes(sourcePath)) return;
+  const reordered = favorites.filter((path) => path !== sourcePath);
+  if (targetPath && reordered.includes(targetPath)) {
+    const targetIndex = reordered.indexOf(targetPath);
+    reordered.splice(targetIndex + (afterTarget ? 1 : 0), 0, sourcePath);
+  } else {
+    reordered.push(sourcePath);
+  }
+  saveFavoriteOrder(reordered);
+  renderFavorites();
+  statusLine.textContent = 'Ordre des favoris enregistré.';
+}
+
+function clearFavoriteDropIndicators() {
+  favoriteList.classList.remove('favorite-list-drop-end');
+  for (const item of favoriteList.querySelectorAll('.favorite-drag-before, .favorite-drag-after')) {
+    item.classList.remove('favorite-drag-before', 'favorite-drag-after');
+  }
+}
+
+function enableFavoriteReorder(element, folder) {
+  element.addEventListener('dragstart', (event) => {
+    event.dataTransfer.setData('application/x-monmail-favorite', folder.path);
+    element.classList.add('favorite-dragging');
+  });
+  element.addEventListener('dragend', () => {
+    element.classList.remove('favorite-dragging');
+    clearFavoriteDropIndicators();
+  });
+  element.addEventListener('dragover', (event) => {
+    if (!Array.from(event.dataTransfer.types).includes('application/x-monmail-favorite')) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    clearFavoriteDropIndicators();
+    const afterTarget = event.clientY >= element.getBoundingClientRect().top + element.offsetHeight / 2;
+    element.classList.add(afterTarget ? 'favorite-drag-after' : 'favorite-drag-before');
+    event.dataTransfer.dropEffect = 'move';
+  });
+  element.addEventListener('dragleave', (event) => {
+    if (!element.contains(event.relatedTarget)) element.classList.remove('favorite-drag-before', 'favorite-drag-after');
+  });
+  element.addEventListener('drop', (event) => {
+    const sourcePath = event.dataTransfer.getData('application/x-monmail-favorite');
+    if (!sourcePath) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const afterTarget = element.classList.contains('favorite-drag-after');
+    clearFavoriteDropIndicators();
+    if (sourcePath !== folder.path) reorderFavorite(sourcePath, folder.path, afterTarget);
+  });
+}
+
 function enableFolderDrag(element, folder) {
   element.draggable = true;
   element.addEventListener('dragstart', (event) => {
@@ -1750,6 +1808,7 @@ async function moveDraggedMessagesToServer(messageIds, folder) {
 function enableServerFolderDrop(element, folder) {
   element.addEventListener('dragover', (event) => {
     const types = Array.from(event.dataTransfer.types);
+    if (types.includes('application/x-monmail-favorite')) return;
     const hasMessages = types.includes('application/x-monmail-message-ids');
     const hasRemoteFolder = types.includes('application/x-gestionmail-folder');
     if (!activeAccountUsesImap() || (!hasMessages && !hasRemoteFolder)) return;
@@ -1762,6 +1821,7 @@ function enableServerFolderDrop(element, folder) {
     if (!element.contains(event.relatedTarget)) element.classList.remove('server-folder-drag-over');
   });
   element.addEventListener('drop', async (event) => {
+    if (event.dataTransfer.getData('application/x-monmail-favorite')) return;
     const ids = draggedMessageIds(event);
     const encodedFolder = event.dataTransfer.getData('application/x-gestionmail-folder');
     if (!ids.length && !encodedFolder) return;
@@ -1919,6 +1979,7 @@ folderList.addEventListener('contextmenu', (event) => {
 });
 folderList.addEventListener('dragover', (event) => {
   if (event.target !== folderList || !activeAccountUsesImap()) return;
+  if (Array.from(event.dataTransfer.types).includes('application/x-monmail-favorite')) return;
   if (!Array.from(event.dataTransfer.types).includes('application/x-gestionmail-folder')) return;
   event.preventDefault();
   event.dataTransfer.dropEffect = 'move';
@@ -1929,6 +1990,7 @@ folderList.addEventListener('dragleave', (event) => {
 });
 folderList.addEventListener('drop', async (event) => {
   if (event.target !== folderList) return;
+  if (event.dataTransfer.getData('application/x-monmail-favorite')) return;
   const encodedFolder = event.dataTransfer.getData('application/x-gestionmail-folder');
   if (!encodedFolder) return;
   event.preventDefault();
@@ -1942,8 +2004,9 @@ folderList.addEventListener('drop', async (event) => {
 
 function renderFavorites() {
   favoriteList.replaceChildren();
-  const favorites = new Set(favoritePaths());
-  const selected = folders.filter((folder) => folder.selectable !== false && favorites.has(folder.path));
+  const selected = favoritePaths()
+    .map((path) => folders.find((folder) => folder.path === path && folder.selectable !== false))
+    .filter(Boolean);
   if (!selected.length) {
     const empty = document.createElement('div');
     empty.className = 'sidebar-empty';
@@ -1960,10 +2023,32 @@ function renderFavorites() {
     item.addEventListener('click', () => selectFolder(folder.path));
     item.addEventListener('contextmenu', (event) => showServerFolderContextMenu(event, folder));
     enableFolderDrag(item, folder);
+    enableFavoriteReorder(item, folder);
     enableServerFolderDrop(item, folder);
     favoriteList.append(item);
   }
 }
+
+favoriteList.addEventListener('dragover', (event) => {
+  if (event.target !== favoriteList || !Array.from(event.dataTransfer.types).includes('application/x-monmail-favorite')) return;
+  event.preventDefault();
+  clearFavoriteDropIndicators();
+  favoriteList.classList.add('favorite-list-drop-end');
+  event.dataTransfer.dropEffect = 'move';
+});
+
+favoriteList.addEventListener('dragleave', (event) => {
+  if (!favoriteList.contains(event.relatedTarget)) clearFavoriteDropIndicators();
+});
+
+favoriteList.addEventListener('drop', (event) => {
+  if (event.target !== favoriteList) return;
+  const sourcePath = event.dataTransfer.getData('application/x-monmail-favorite');
+  if (!sourcePath) return;
+  event.preventDefault();
+  clearFavoriteDropIndicators();
+  reorderFavorite(sourcePath);
+});
 
 function folderTree() {
   const delimiter = folders.find((folder) => folder.delimiter)?.delimiter || '/';
@@ -2638,6 +2723,7 @@ async function selectAccount(accountId) {
   viewingLocal = false;
   localStorage.setItem(lastAccountStorageKey, accountId);
   renderAccounts();
+  await loadTodos();
   welcome.hidden = true;
   mailView.hidden = false;
   syncButton.disabled = false;
@@ -2682,7 +2768,12 @@ function configureAutoSync() {
 
 async function openSettingsDialog() {
   try {
-    currentSettings = await window.gestionMail.getSettings();
+    const [settings, appVersion] = await Promise.all([
+      window.gestionMail.getSettings(),
+      window.gestionMail.getAppVersion()
+    ]);
+    currentSettings = settings;
+    document.querySelector('#app-version').textContent = `Monmail — version ${appVersion}`;
     renderAccounts();
     settingsForm.elements.autoSyncMinutes.value = String(currentSettings.autoSyncMinutes);
     settingsForm.elements.fontSize.value = String(currentSettings.fontSize);
@@ -3112,7 +3203,10 @@ async function loadAccounts(selectNewest = false) {
   }
   renderAccounts();
   if (selectedAccountId) await selectAccount(selectedAccountId);
-  else statusLine.textContent = 'Aucun compte configuré';
+  else {
+    await loadTodos();
+    statusLine.textContent = 'Aucun compte configuré';
+  }
 }
 
 document.querySelector('#add-account').addEventListener('click', () => {
@@ -3431,7 +3525,7 @@ todoForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   todoError.textContent = '';
   try {
-    const saved = await window.gestionMail.saveTodo(Object.fromEntries(new FormData(todoForm).entries()));
+    const saved = await window.gestionMail.saveTodo(selectedAccountId, Object.fromEntries(new FormData(todoForm).entries()));
     todos.push(saved);
     todoForm.reset();
     todoForm.elements.category.value = 'Général';
@@ -3851,7 +3945,7 @@ async function initialiseApplication() {
   applyInterfaceColor(currentSettings.interfaceColor);
   autoSyncSelect.value = String(currentSettings.autoSyncMinutes);
   configureAutoSync();
-  await Promise.all([loadLocalFolders(), loadContacts(), loadTodos(), loadDrafts(), loadAccounts()]);
+  await Promise.all([loadContacts(), loadDrafts(), loadAccounts()]);
 }
 
 initialiseApplication().catch((error) => {

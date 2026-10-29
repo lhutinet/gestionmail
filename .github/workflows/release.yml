@@ -1,0 +1,41 @@
+name: Publier Monmail pour Windows
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Préparer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Installer les dépendances
+        run: npm ci
+
+      - name: Vérifier le code
+        run: npm run check
+
+      - name: Construire les exécutables Windows
+        run: npm run dist:win
+
+      - name: Publier la Release GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/Monmail-Setup-*.exe
+            dist/Monmail-Setup-*.exe.blockmap
+            dist/Monmail-Portable-*.exe
+            dist/latest.yml

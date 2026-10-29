@@ -1,6 +1,6 @@
 {
   "name": "monmail",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Client de messagerie Windows local",
   "author": "Monmail",
@@ -52,6 +52,7 @@
       ]
     },
     "nsis": {
+      "artifactName": "Monmail-Setup-${version}.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
@@ -62,6 +63,12 @@
     "portable": {
       "artifactName": "Monmail-Portable-${version}.${ext}"
     },
-    "publish": [{ "provider": "github", "owner": "lhutinet", "repo": "gestionmail" }]
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "lhutinet",
+        "repo": "gestionmail"
+      }
+    ]
   }
 }

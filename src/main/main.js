@@ -124,7 +124,7 @@ function updateTrayMenu() {
     { label: 'Afficher Monmail', enabled: !visible, click: showMainWindow },
     { label: 'Masquer Monmail', enabled: visible, click: () => mainWindow?.hide() },
     { type: 'separator' },
-    { label: 'Rechercher les mises à jour', click: () => checkForUpdates().catch((error) => broadcastUpdate({ state: 'error', message: error.message })) },
+    { label: 'Rechercher les mises à jour', click: () => checkForUpdates().catch((error) => broadcastUpdate({ state: 'error', message: updateErrorMessage(error) })) },
     { type: 'separator' },
     { label: 'Quitter Monmail', click: () => { isQuitting = true; app.quit(); } }
   ]));
@@ -136,11 +136,24 @@ function broadcastUpdate(status) {
   }
 }
 
+function updateErrorMessage(error) {
+  const message = String(error?.message || error || 'Erreur inconnue');
+  if (/^(Aucune version publique|Mise à jour impossible)/i.test(message)) return message;
+  if (/\b404\b|releases\.atom/i.test(message)) {
+    return 'Aucune version publique de Monmail n’est encore disponible sur GitHub.';
+  }
+  return `Mise à jour impossible : ${message}`;
+}
+
 async function checkForUpdates(automatic = false) {
   if (!app.isPackaged) return { state: 'development', message: 'La recherche de mise à jour fonctionne dans la version Windows installée.' };
   autoUpdater.autoDownload = false;
   broadcastUpdate({ state: 'checking', message: automatic ? 'Recherche automatique d’une mise à jour…' : 'Recherche d’une mise à jour…' });
-  await autoUpdater.checkForUpdates();
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (error) {
+    throw new Error(updateErrorMessage(error));
+  }
   return { state: 'checking' };
 }
 
@@ -148,7 +161,7 @@ autoUpdater.on('update-available', (info) => { updateAvailable = true; broadcast
 autoUpdater.on('update-not-available', () => broadcastUpdate({ state: 'current', message: 'Monmail est à jour.' }));
 autoUpdater.on('download-progress', (progress) => broadcastUpdate({ state: 'downloading', message: `Téléchargement : ${Math.round(progress.percent)} %`, percent: progress.percent }));
 autoUpdater.on('update-downloaded', (info) => { updateDownloaded = true; broadcastUpdate({ state: 'downloaded', message: `Version ${info.version} prête à être installée.`, version: info.version }); });
-autoUpdater.on('error', (error) => broadcastUpdate({ state: 'error', message: `Mise à jour impossible : ${error.message}` }));
+autoUpdater.on('error', (error) => broadcastUpdate({ state: 'error', message: updateErrorMessage(error) }));
 
 function crc32(buffer) {
   let crc = 0xffffffff;
@@ -619,6 +632,15 @@ app.whenReady().then(async () => {
       if (updatedAccount.name !== 'Compte modifié' || (await getAccountWithPassword(smokeAccount.id)).password !== 'secret-test') {
         throw new Error('Échec du contrôle de modification du compte.');
       }
+      const smokeTodo = saveTodo({ title: 'TODO partagée', category: 'Test', priority: 'high' }, smokeAccount.localDirectory);
+      if (
+        !listTodos(smokeAccount.localDirectory).some((todo) => todo.id === smokeTodo.id) ||
+        !fs.existsSync(path.join(smokeAccount.localDirectory, 'todos.json')) ||
+        !fs.existsSync(path.join(smokeAccount.localDirectory, 'TODO.md'))
+      ) {
+        throw new Error('Échec du contrôle de stockage de la TODO dans le dossier local du compte.');
+      }
+      deleteTodo(smokeTodo.id, smokeAccount.localDirectory);
       deleteAccountMessages(smokeAccount.id);
       deleteAccount(smokeAccount.id);
       if (listAccounts().some((account) => account.id === smokeAccount.id)) {
@@ -753,9 +775,10 @@ app.whenReady().then(async () => {
     }
     return { imported: true, count };
   });
-  ipcMain.handle('todos:list', () => listTodos());
-  ipcMain.handle('todos:save', (_event, todo) => saveTodo(todo));
-  ipcMain.handle('todos:delete', (_event, todoId) => deleteTodo(todoId));
+  const todoDirectoryForAccount = (accountId) => listAccounts().find((account) => account.id === String(accountId || ''))?.localDirectory || '';
+  ipcMain.handle('todos:list', (_event, accountId) => listTodos(todoDirectoryForAccount(accountId)));
+  ipcMain.handle('todos:save', (_event, accountId, todo) => saveTodo(todo, todoDirectoryForAccount(accountId)));
+  ipcMain.handle('todos:delete', (_event, accountId, todoId) => deleteTodo(todoId, todoDirectoryForAccount(accountId)));
   ipcMain.handle('mail-rules:list', () => listMailRules());
   ipcMain.handle('mail-rules:save', (_event, rule) => saveMailRule(rule));
   ipcMain.handle('mail-rules:delete', (_event, ruleId) => deleteMailRule(ruleId));
@@ -1043,6 +1066,7 @@ app.whenReady().then(async () => {
     return { executed: true };
   });
   ipcMain.handle('settings:get', () => getSettings());
+  ipcMain.handle('app:version', () => app.getVersion());
   ipcMain.handle('backup:create', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(owner, { title: 'Choisir où créer la sauvegarde Monmail', properties: ['openDirectory', 'createDirectory'] });
@@ -1136,7 +1160,7 @@ app.whenReady().then(async () => {
   createWindow();
   await createTray();
   if (!isSmokeTest && getSettings().autoUpdateEnabled) {
-    setTimeout(() => checkForUpdates(true).catch((error) => broadcastUpdate({ state: 'error', message: error.message })), 5000);
+    setTimeout(() => checkForUpdates(true).catch((error) => broadcastUpdate({ state: 'error', message: updateErrorMessage(error) })), 5000);
   }
 
   app.on('activate', () => {
