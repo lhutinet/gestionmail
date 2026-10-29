@@ -28,7 +28,7 @@ jobs:
         run: npm run check
 
       - name: Construire les exécutables Windows
-        run: npm run dist:win
+        run: npm run dist:win -- --publish never
 
       - name: Publier la Release GitHub
         uses: softprops/action-gh-release@v2
