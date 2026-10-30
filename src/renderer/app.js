@@ -173,7 +173,7 @@ let columnWidths = { ...defaultColumnWidths };
 
 function applyInterfaceFontSize(value) {
   const size = [13, 14, 15, 16, 17].includes(Number(value)) ? Number(value) : 15;
-  document.documentElement.style.setProperty('--ui-font-size', `${size}px`);
+  document.documentElement.style.setProperty('--ui-font-size', `${size - 2}px`);
 }
 
 function applyInterfaceColor(value) {
@@ -443,8 +443,6 @@ function renderTodos() {
     empty.textContent = todoFilter === 'open' ? 'Aucune tâche ouverte.' : 'Aucune tâche dans cette vue.';
     todoList.append(empty);
   }
-  const priorityOrder = { high: 0, normal: 1, low: 2 };
-  visible.sort((left, right) => priorityOrder[left.priority] - priorityOrder[right.priority] || left.category.localeCompare(right.category, 'fr'));
   for (const todo of visible) {
     const row = document.createElement('div');
     row.className = `todo-row${todo.done ? ' done' : ''}`;
@@ -469,9 +467,6 @@ function renderTodos() {
     meta.className = 'todo-meta';
     meta.textContent = todo.category;
     content.append(title, meta);
-    const priority = document.createElement('span');
-    priority.className = `todo-priority ${todo.priority}`;
-    priority.textContent = todo.priority === 'high' ? 'Haute' : todo.priority === 'low' ? 'Basse' : 'Normale';
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'todo-delete';
@@ -487,7 +482,7 @@ function renderTodos() {
         todoError.textContent = readableError(error);
       }
     });
-    row.append(checkbox, content, priority, remove);
+    row.append(checkbox, content, remove);
     todoList.append(row);
   }
 }
@@ -3163,7 +3158,7 @@ async function openMessage(messageId, row) {
         save.type = 'button';
         save.className = 'attachment-save-button';
         save.textContent = '⇩';
-        save.title = 'Enregistrer la pièce jointe dans un dossier';
+        save.title = 'Enregistrer la pièce jointe dans Téléchargements';
         save.addEventListener('click', async () => {
           try {
             const result = await window.gestionMail.saveAttachment(message.id, attachment.attachmentIndex);
@@ -3526,10 +3521,9 @@ todoForm.addEventListener('submit', async (event) => {
   todoError.textContent = '';
   try {
     const saved = await window.gestionMail.saveTodo(selectedAccountId, Object.fromEntries(new FormData(todoForm).entries()));
-    todos.push(saved);
+    todos.unshift(saved);
     todoForm.reset();
     todoForm.elements.category.value = 'Général';
-    todoForm.elements.priority.value = 'normal';
     updateTodoCount();
     renderTodos();
     todoForm.elements.title.focus();

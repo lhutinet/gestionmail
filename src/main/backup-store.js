@@ -3,8 +3,9 @@ const path = require('node:path');
 const { app } = require('electron');
 const { getSettings } = require('./settings-store');
 const { listAccounts } = require('./account-store');
+const { getTodoPaths } = require('./todo-store');
 
-const USER_FILES = ['accounts.json', 'composer.json', 'todos.json', 'TODO.md'];
+const USER_FILES = ['accounts.json', 'composer.json'];
 
 function copyIfExists(source, target) {
   if (!fs.existsSync(source)) return;
@@ -20,6 +21,18 @@ function safeAccountDirectoryName(accountId) {
   return String(accountId || 'compte').replace(/[^a-z0-9_-]/gi, '_').slice(0, 80) || 'compte';
 }
 
+function copyTodoFiles(targetProfileDirectory) {
+  const todoPaths = getTodoPaths();
+  copyIfExists(todoPaths.json, path.join(targetProfileDirectory, 'todos.json'));
+  copyIfExists(todoPaths.markdown, path.join(targetProfileDirectory, 'TODO.md'));
+}
+
+function restoreTodoFiles(sourceProfileDirectory) {
+  const todoPaths = getTodoPaths();
+  copyIfExists(path.join(sourceProfileDirectory, 'todos.json'), todoPaths.json);
+  copyIfExists(path.join(sourceProfileDirectory, 'TODO.md'), todoPaths.markdown);
+}
+
 function createBackup(parentDirectory) {
   const root = path.join(path.resolve(parentDirectory), backupName());
   if (fs.existsSync(root)) throw new Error('Le dossier de sauvegarde existe déjà.');
@@ -27,6 +40,7 @@ function createBackup(parentDirectory) {
   const userData = app.getPath('userData');
   const settings = getSettings();
   for (const filename of USER_FILES) copyIfExists(path.join(userData, filename), path.join(root, 'profil', filename));
+  copyTodoFiles(path.join(root, 'profil'));
   copyIfExists(path.join(settings.dataDirectory, 'messages.sqlite'), path.join(root, 'donnees', 'messages.sqlite'));
   copyIfExists(path.join(settings.dataDirectory, 'Dossiers locaux'), path.join(root, 'donnees', 'Dossiers locaux'));
   const accountLocalFolders = [];
@@ -75,6 +89,7 @@ function applyPendingRestore() {
   const recovery = path.join(userData, `avant-restauration-${new Date().toISOString().replace(/[:.]/g, '-')}`);
   fs.mkdirSync(recovery, { recursive: true });
   for (const filename of USER_FILES) copyIfExists(path.join(userData, filename), path.join(recovery, 'profil', filename));
+  copyTodoFiles(path.join(recovery, 'profil'));
   copyIfExists(path.join(userData, 'settings.json'), path.join(recovery, 'profil', 'settings.json'));
   copyIfExists(path.join(currentSettings.dataDirectory, 'messages.sqlite'), path.join(recovery, 'donnees', 'messages.sqlite'));
   copyIfExists(path.join(currentSettings.dataDirectory, 'Dossiers locaux'), path.join(recovery, 'donnees', 'Dossiers locaux'));
@@ -83,6 +98,7 @@ function applyPendingRestore() {
   }
 
   for (const filename of USER_FILES) copyIfExists(path.join(root, 'profil', filename), path.join(userData, filename));
+  restoreTodoFiles(path.join(root, 'profil'));
   const backedSettings = { ...currentSettings, ...JSON.parse(JSON.stringify(validateBackup(root).settings || {})), dataDirectory: currentSettings.dataDirectory };
   fs.writeFileSync(path.join(userData, 'settings.json'), JSON.stringify(backedSettings, null, 2), 'utf8');
   fs.rmSync(path.join(currentSettings.dataDirectory, 'messages.sqlite-wal'), { force: true });

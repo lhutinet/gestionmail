@@ -3,12 +3,34 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { app } = require('electron');
 
-function todoPaths(localDirectory = '') {
-  const directory = localDirectory ? path.resolve(String(localDirectory)) : app.getPath('userData');
+function directTodoPaths(directory) {
   return {
     json: path.join(directory, 'todos.json'),
     markdown: path.join(directory, 'TODO.md')
   };
+}
+
+function machineTodoDirectory() {
+  if (process.argv.includes('--smoke-test')) return '';
+  const programData = process.env.ProgramData || process.env.PROGRAMDATA;
+  if (!programData) return '';
+  try {
+    const configPath = path.join(programData, 'Monmail', 'machine.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const configuredDirectory = String(config.todoDirectory || '').trim();
+    if (!configuredDirectory || !path.isAbsolute(configuredDirectory)) return '';
+    const directory = path.resolve(configuredDirectory);
+    if (directory === path.parse(directory).root || !fs.existsSync(directory)) return '';
+    return directory;
+  } catch {
+    return '';
+  }
+}
+
+function todoPaths(localDirectory = '') {
+  const directory = machineTodoDirectory()
+    || (localDirectory ? path.resolve(String(localDirectory)) : app.getPath('userData'));
+  return directTodoPaths(directory);
 }
 
 function migrationStatePath() {
@@ -37,20 +59,7 @@ function markMigrationComplete(directory) {
 }
 
 function initialTodos() {
-  const titles = [
-    ['Brouillons automatiques et protection contre la fermeture', 'Rédaction', 'high'],
-    ['Conserver les messages envoyés', 'Messagerie', 'high'],
-    ['Sélection et actions multiples sur les mails', 'Messagerie', 'high'],
-    ['Recherche globale dans tous les comptes et dossiers locaux', 'Recherche', 'high'],
-    ['Annulation, doublons et suppression récursive des dossiers locaux', 'Stockage local', 'normal'],
-    ['Importer, exporter et fusionner les contacts', 'Contacts', 'normal'],
-    ['Signatures, images et modèles de messages', 'Rédaction', 'normal'],
-    ['Règles de tri automatique des messages', 'Automatisation', 'high']
-  ];
-  const now = new Date().toISOString();
-  return titles.map(([title, category, priority]) => ({
-    id: randomUUID(), title, category, priority, done: true, createdAt: now, updatedAt: now
-  }));
+  return [];
 }
 
 function normaliseTodo(todo, existing = null) {
@@ -62,7 +71,6 @@ function normaliseTodo(todo, existing = null) {
     id: existing?.id || String(todo.id || randomUUID()),
     title,
     category: String(todo.category || 'Général').trim().slice(0, 80) || 'Général',
-    priority: ['low', 'normal', 'high'].includes(todo.priority) ? todo.priority : 'normal',
     done: Boolean(todo.done),
     createdAt: existing?.createdAt || now,
     updatedAt: now
@@ -81,7 +89,7 @@ function writeTodos(todos, localDirectory = '') {
     `Total : ${todos.length} — Ouvertes : ${open} — Terminées : ${todos.length - open}`, ''
   ];
   for (const todo of todos) {
-    lines.push(`- [${todo.done ? 'x' : ' '}] **${todo.category}** — ${todo.title} (${todo.priority})`);
+    lines.push(`- [${todo.done ? 'x' : ' '}] **${todo.category}** — ${todo.title}`);
   }
   fs.writeFileSync(paths.markdown, `${lines.join('\n')}\n`, 'utf8');
   return todos;
@@ -124,7 +132,20 @@ function mergeTodos(current, legacy) {
 function listTodos(localDirectory = '') {
   const paths = todoPaths(localDirectory);
   let todos = readTodoFile(paths.json);
-  const legacyPaths = todoPaths();
+  const machineDirectory = machineTodoDirectory();
+  if (!todos && machineDirectory) {
+    const sourceDirectories = [localDirectory, app.getPath('userData')]
+      .filter(Boolean)
+      .map((directory) => path.resolve(String(directory)))
+      .filter((directory, index, values) => directory !== machineDirectory && values.indexOf(directory) === index);
+    let migratedTodos = [];
+    for (const sourceDirectory of sourceDirectories) {
+      const sourceTodos = readTodoFile(directTodoPaths(sourceDirectory).json);
+      if (sourceTodos?.length) migratedTodos = mergeTodos(migratedTodos, sourceTodos);
+    }
+    if (migratedTodos.length) return writeTodos(migratedTodos, localDirectory);
+  }
+  const legacyPaths = directTodoPaths(app.getPath('userData'));
   const usesSharedDirectory = path.resolve(paths.json) !== path.resolve(legacyPaths.json);
   if (usesSharedDirectory && !readMigrationState()[migrationKey(path.dirname(paths.json))]) {
     const legacyTodos = readTodoFile(legacyPaths.json);
@@ -154,4 +175,4 @@ function deleteTodo(todoId, localDirectory = '') {
   return { deleted: true };
 }
 
-module.exports = { deleteTodo, listTodos, saveTodo };
+module.exports = { deleteTodo, getTodoPaths: todoPaths, listTodos, saveTodo };

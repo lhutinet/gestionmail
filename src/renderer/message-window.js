@@ -270,7 +270,7 @@ function applyInterfaceColor(value) {
 
 function applyWindowSettings(settings) {
   const fontSize = [13, 14, 15, 16, 17].includes(Number(settings.fontSize)) ? Number(settings.fontSize) : 15;
-  document.documentElement.style.setProperty('--ui-font-size', `${fontSize}px`);
+  document.documentElement.style.setProperty('--ui-font-size', `${fontSize - 2}px`);
   applyInterfaceColor(settings.interfaceColor);
 }
 

@@ -40,6 +40,16 @@ function csvCell(value) {
   return `"${String(value || '').replaceAll('"', '""')}"`;
 }
 
+function safeAttachmentFilename(filename) {
+  return String(path.basename(filename || 'piece-jointe'))
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/[. ]+$/g, '') || 'piece-jointe';
+}
+
+function attachmentDownloadPath(filename) {
+  return path.join(app.getPath('downloads'), safeAttachmentFilename(filename));
+}
+
 function contactsToCsv(contacts) {
   const rows = [['Nom', 'E-mail', 'Téléphone', 'Société', 'Notes']];
   for (const contact of contacts) rows.push([contact.name, contact.email, contact.phone, contact.company, contact.notes]);
@@ -108,6 +118,13 @@ if (isSmokeTest) {
   const localCacheRoot = path.join(process.env.LOCALAPPDATA || app.getPath('appData'), 'Monmail', 'Cache');
   fs.mkdirSync(localCacheRoot, { recursive: true });
   app.commandLine.appendSwitch('disk-cache-dir', localCacheRoot);
+}
+
+const hasSingleInstanceLock = isSmokeTest || app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else if (!isSmokeTest) {
+  app.on('second-instance', () => showMainWindow());
 }
 
 function showMainWindow() {
@@ -329,6 +346,10 @@ function createWindow() {
   if (isSmokeTest) {
     window.webContents.once('did-finish-load', async () => {
       try {
+        if (
+          safeAttachmentFilename('facture?.pdf') !== 'facture_.pdf' ||
+          path.dirname(attachmentDownloadPath('facture?.pdf')) !== app.getPath('downloads')
+        ) throw new Error('Échec du contrôle du dossier de téléchargement des pièces jointes.');
         const colorResult = await window.webContents.executeJavaScript(`(async () => {
           await new Promise((resolve) => setTimeout(resolve, 100));
           const editor = document.querySelector('#compose-body-editor');
@@ -357,15 +378,23 @@ function createWindow() {
           subject.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }));
           const contextLabels = [...document.querySelectorAll('.context-menu button')].map((button) => button.textContent);
           const rootStyle = document.documentElement.style;
+          const previousAccountId = selectedAccountId;
+          selectedAccountId = '__favorites_smoke__';
+          localStorage.setItem(favoriteStorageKey(), JSON.stringify(['INBOX', 'Archives']));
+          const favoriteOrder = favoritePaths();
+          localStorage.removeItem(favoriteStorageKey());
+          selectedAccountId = previousAccountId;
           return {
             inputHtml,
             changeHtml,
             contextLabels,
             interfaceColor: rootStyle.getPropertyValue('--accent-color').trim(),
             interfaceContrast: rootStyle.getPropertyValue('--accent-contrast').trim(),
+            interfaceFontSize: rootStyle.getPropertyValue('--ui-font-size').trim(),
             hasAdvancedSearch: Boolean(document.querySelector('#advanced-search-form input[name="dateFrom"]')),
             hasEditorBackground: Boolean(document.querySelector('#compose-background-color')),
-            hasBackupActions: Boolean(document.querySelector('#create-backup'))
+            hasBackupActions: Boolean(document.querySelector('#create-backup')),
+            favoriteOrder
           };
         })()`);
         if (
@@ -374,8 +403,10 @@ function createWindow() {
           !colorResult.contextLabels.includes('Copier') ||
           !colorResult.contextLabels.includes('Coller') ||
           colorResult.interfaceColor !== '#d04f85' ||
+          colorResult.interfaceFontSize !== '12px' ||
           !['#102033', '#ffffff'].includes(colorResult.interfaceContrast) ||
-          !colorResult.hasAdvancedSearch || !colorResult.hasEditorBackground || !colorResult.hasBackupActions
+          !colorResult.hasAdvancedSearch || !colorResult.hasEditorBackground || !colorResult.hasBackupActions ||
+          JSON.stringify(colorResult.favoriteOrder) !== JSON.stringify(['INBOX', 'Archives'])
         ) {
           throw new Error(`Couleur non appliquée dans l'éditeur : ${JSON.stringify(colorResult)}`);
         }
@@ -465,6 +496,7 @@ function scheduleLocalEmlRefresh(sender = null, accountId = null, accountEmail =
 }
 
 app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return;
   const restore = applyPendingRestore();
   if (restore.restored) console.info(`Sauvegarde restaurée. Copie précédente : ${restore.recoveryPath}`);
   if (isSmokeTest) {
@@ -632,8 +664,9 @@ app.whenReady().then(async () => {
       if (updatedAccount.name !== 'Compte modifié' || (await getAccountWithPassword(smokeAccount.id)).password !== 'secret-test') {
         throw new Error('Échec du contrôle de modification du compte.');
       }
-      const smokeTodo = saveTodo({ title: 'TODO partagée', category: 'Test', priority: 'high' }, smokeAccount.localDirectory);
+      const smokeTodo = saveTodo({ title: 'TODO partagée', category: 'Test' }, smokeAccount.localDirectory);
       if (
+        Object.hasOwn(smokeTodo, 'priority') ||
         !listTodos(smokeAccount.localDirectory).some((todo) => todo.id === smokeTodo.id) ||
         !fs.existsSync(path.join(smokeAccount.localDirectory, 'todos.json')) ||
         !fs.existsSync(path.join(smokeAccount.localDirectory, 'TODO.md'))
@@ -641,6 +674,9 @@ app.whenReady().then(async () => {
         throw new Error('Échec du contrôle de stockage de la TODO dans le dossier local du compte.');
       }
       deleteTodo(smokeTodo.id, smokeAccount.localDirectory);
+      if (listTodos(smokeAccount.localDirectory).some((todo) => todo.id === smokeTodo.id)) {
+        throw new Error('Échec du contrôle de suppression définitive d’une tâche TODO.');
+      }
       deleteAccountMessages(smokeAccount.id);
       deleteAccount(smokeAccount.id);
       if (listAccounts().some((account) => account.id === smokeAccount.id)) {
@@ -692,8 +728,14 @@ app.whenReady().then(async () => {
       }
       fs.rmSync(externalEmlPath, { force: true });
       checkpointDatabase();
+      saveTodo({ title: 'Sauvegarde TODO', category: 'Test' });
       const smokeBackup = createBackup(app.getPath('userData'));
-      if (!fs.existsSync(path.join(smokeBackup.path, 'manifest.json')) || !fs.existsSync(path.join(smokeBackup.path, 'donnees', 'messages.sqlite'))) throw new Error('Échec de la sauvegarde complète.');
+      if (
+        !fs.existsSync(path.join(smokeBackup.path, 'manifest.json')) ||
+        !fs.existsSync(path.join(smokeBackup.path, 'donnees', 'messages.sqlite')) ||
+        !fs.existsSync(path.join(smokeBackup.path, 'profil', 'todos.json')) ||
+        !fs.existsSync(path.join(smokeBackup.path, 'profil', 'TODO.md'))
+      ) throw new Error('Échec de la sauvegarde complète.');
       fs.rmSync(smokeBackup.path, { recursive: true, force: true });
       listLocalFolders();
       if (listMessages('__local__', `local:${migrationFolder.id}`).length !== 1) {
@@ -1023,7 +1065,7 @@ app.whenReady().then(async () => {
     const owner = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showSaveDialog(owner, {
       title: 'Enregistrer la pièce jointe',
-      defaultPath: path.basename(attachment.filename)
+      defaultPath: attachmentDownloadPath(attachment.filename)
     });
     if (result.canceled || !result.filePath) return { saved: false };
     fs.writeFileSync(result.filePath, attachment.content);
@@ -1031,9 +1073,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('attachments:open', async (_event, messageId, attachmentIndex) => {
     const attachment = getAttachment(messageId, attachmentIndex);
-    const safeName = String(path.basename(attachment.filename || 'piece-jointe'))
-      .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
-      .replace(/[. ]+$/g, '') || 'piece-jointe';
+    const safeName = safeAttachmentFilename(attachment.filename);
     const messageKey = crypto.createHash('sha256').update(String(messageId)).digest('hex').slice(0, 16);
     const attachmentDirectory = path.join(app.getPath('temp'), 'GestionMail', 'pieces-jointes', messageKey);
     const filePath = path.join(attachmentDirectory, `${Number(attachmentIndex)}-${safeName}`);
