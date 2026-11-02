@@ -19,6 +19,15 @@ function imapOptions(account) {
   };
 }
 
+function imapClient(account) {
+  const client = new ImapFlow(imapOptions(account));
+  // ImapFlow rejette les opérations en cours, mais peut aussi émettre une erreur
+  // tardive lorsque le serveur coupe le socket. Sans listener, Node transforme cet
+  // événement réseau en exception non interceptée dans le processus principal.
+  client.on('error', () => undefined);
+  return client;
+}
+
 function smtpTransport(account) {
   return nodemailer.createTransport({
     host: account.outgoingHost,
@@ -53,7 +62,7 @@ async function testConfiguration(account) {
   if (account.protocol === 'pop3') {
     await withPop3(account, async () => undefined);
   } else {
-    const client = new ImapFlow(imapOptions(account));
+    const client = imapClient(account);
     await client.connect();
     await client.logout();
   }
@@ -67,7 +76,7 @@ async function listFolders(account) {
   if (account.protocol === 'pop3') {
     return [{ path: 'INBOX', name: 'Boîte de réception', specialUse: '\\Inbox' }];
   }
-  const client = new ImapFlow(imapOptions(account));
+  const client = imapClient(account);
   await client.connect();
   try {
     const folders = await client.list();
@@ -90,7 +99,7 @@ async function listFolders(account) {
 }
 
 async function syncImap(account, folder, fetchAll = false) {
-  const client = new ImapFlow(imapOptions(account));
+  const client = imapClient(account);
   await client.connect();
   let imported = 0;
   let lock;
@@ -179,7 +188,7 @@ function imapUid(reference) {
 
 async function setRemoteReadState(account, reference, isRead) {
   if (account.protocol !== 'imap') return { updated: false, localOnly: true };
-  const client = new ImapFlow(imapOptions(account));
+  const client = imapClient(account);
   await client.connect();
   let lock;
   try {
@@ -197,7 +206,7 @@ async function setRemoteReadState(account, reference, isRead) {
 async function moveRemoteMessage(account, reference, destination) {
   if (account.protocol !== 'imap') throw new Error('Le déplacement dans les dossiers nécessite un compte IMAP.');
   if (!String(destination || '').trim()) throw new Error('Dossier de destination introuvable.');
-  const client = new ImapFlow(imapOptions(account));
+  const client = imapClient(account);
   await client.connect();
   let lock;
   try {
@@ -214,7 +223,7 @@ async function moveRemoteMessage(account, reference, destination) {
 async function copyRemoteMessage(account, reference, destination) {
   if (account.protocol !== 'imap') throw new Error('La copie entre dossiers nécessite un compte IMAP.');
   if (!String(destination || '').trim()) throw new Error('Dossier de destination introuvable.');
-  const client = new ImapFlow(imapOptions(account));
+  const client = imapClient(account);
   await client.connect();
   let lock;
   try {
@@ -230,7 +239,7 @@ async function copyRemoteMessage(account, reference, destination) {
 
 async function deleteRemoteMessage(account, reference) {
   if (account.protocol !== 'imap') throw new Error('La suppression sur le serveur nécessite un compte IMAP.');
-  const client = new ImapFlow(imapOptions(account));
+  const client = imapClient(account);
   await client.connect();
   let lock;
   try {
@@ -248,7 +257,7 @@ async function createRemoteFolder(account, folderPath) {
   if (account.protocol !== 'imap') throw new Error('La création de dossiers nécessite un compte IMAP.');
   const target = String(folderPath || '').trim();
   if (!target) throw new Error('Le nom du dossier est obligatoire.');
-  const client = new ImapFlow(imapOptions(account));
+  const client = imapClient(account);
   await client.connect();
   try {
     await client.mailboxCreate(target);
@@ -264,7 +273,7 @@ async function renameRemoteFolder(account, folderPath, newPath) {
   const target = String(newPath || '').trim();
   if (!source || !target) throw new Error('Le nom du dossier est obligatoire.');
   if (source.toUpperCase() === 'INBOX') throw new Error('La boîte de réception ne peut pas être renommée.');
-  const client = new ImapFlow(imapOptions(account));
+  const client = imapClient(account);
   await client.connect();
   try {
     await client.mailboxRename(source, target);
@@ -279,7 +288,7 @@ async function deleteRemoteFolder(account, folderPath) {
   const target = String(folderPath || '').trim();
   if (!target) throw new Error('Dossier introuvable.');
   if (target.toUpperCase() === 'INBOX') throw new Error('La boîte de réception ne peut pas être supprimée.');
-  const client = new ImapFlow(imapOptions(account));
+  const client = imapClient(account);
   await client.connect();
   try {
     await client.mailboxDelete(target);
