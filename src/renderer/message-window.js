@@ -244,7 +244,7 @@ async function loadMessage() {
       item.append(button, save);
       attachments.append(item);
     }
-    container.append(attachments);
+    headers.after(attachments);
   }
 }
 

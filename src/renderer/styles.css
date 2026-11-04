@@ -197,14 +197,13 @@ nav { display: grid; gap: 4px; }
 .address-chip:hover { border-color: var(--accent-mid); background: var(--accent-soft); }
 .address-chip.selected { border-color: var(--accent-strong); color: var(--accent-ink); background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent-ring); }
 .message-date-line { padding-top: 3px; color: #778395; }
-.message-body { margin-top: 24px; color: #263243; line-height: 1.65; white-space: pre-wrap; }
-.message-html { overflow-wrap: anywhere; white-space: normal; }
-.message-html table { max-width: 100%; border-collapse: collapse; }
-.message-html td, .message-html th { padding: 4px; }
+.message-body { margin-top: 20px; color: #263243; line-height: 1.65; white-space: pre-wrap; }
+.message-html { max-width: 100%; padding: 20px 22px; overflow-x: auto; overflow-wrap: anywhere; border: 1px solid #e0e5eb; border-radius: 10px; color: initial; background: white; font-size: initial; line-height: normal; white-space: normal; }
+.message-html table { max-width: 100%; }
 .message-html pre { overflow-x: auto; white-space: pre-wrap; }
 .message-html img { max-width: 100%; height: auto; }
 .message-html img:not([src]) { display: none; }
-.received-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; padding-top: 18px; border-top: 1px solid #dfe4ea; }
+.received-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; padding: 12px; border: 1px solid #d9e1e9; border-radius: 9px; background: #f2f6f9; }
 .attachment-item { display: inline-flex; align-items: stretch; }
 .attachment-button, .attachment-save-button { padding: 8px 11px; border: 1px solid #ccd5df; color: #344052; background: white; }
 .attachment-button { border-radius: 8px 0 0 8px; }

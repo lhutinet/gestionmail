@@ -3170,7 +3170,7 @@ async function openMessage(messageId, row) {
         item.append(button, save);
         attachments.append(item);
       }
-      messageContent.append(attachments);
+      headers.after(attachments);
     }
     if (!message.isRead) {
       window.gestionMail.setMessageRead(message.id, true).then(() => {

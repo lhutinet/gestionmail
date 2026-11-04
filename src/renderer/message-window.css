@@ -43,16 +43,15 @@ dialog input { width: 100%; padding: 10px 11px; border: 1px solid #b8c5d2; borde
 .address-chip.selected { border-color: var(--accent-strong); color: var(--accent-ink); background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent-ring); }
 .standalone-contact-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
 .standalone-contact-actions button { padding: 8px 11px; border: 1px solid #b8c5d2; border-radius: 7px; color: #263243; background: white; }
-.message-body { margin-top: 26px; color: #263243; line-height: 1.65; white-space: pre-wrap; }
-.message-html { overflow-wrap: anywhere; white-space: normal; }
-.message-html table { max-width: 100%; border-collapse: collapse; }
-.message-html td, .message-html th { padding: 4px; }
+.message-body { margin-top: 20px; color: #263243; line-height: 1.65; white-space: pre-wrap; }
+.message-html { max-width: 100%; padding: 20px 22px; overflow-x: auto; overflow-wrap: anywhere; border: 1px solid #e0e5eb; border-radius: 10px; color: initial; background: white; font-size: initial; line-height: normal; white-space: normal; }
+.message-html table { max-width: 100%; }
 .message-html pre { overflow-x: auto; white-space: pre-wrap; }
 .message-html img { max-width: 100%; height: auto; }
 .message-html img:not([src]) { display: none; }
 .remote-images-notice { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding: 11px 13px; border: 1px solid #d7e0e8; border-radius: 9px; color: #536173; background: #f2f6f9; font-size: 13px; }
 .remote-images-button { flex: 0 0 auto; padding: 8px 11px; border: 1px solid #b8c5d2; border-radius: 7px; color: #263243; background: white; }
-.received-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 28px; padding-top: 18px; border-top: 1px solid #dfe4ea; }
+.received-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; padding: 12px; border: 1px solid #d9e1e9; border-radius: 9px; background: #f2f6f9; }
 .attachment-item { display: inline-flex; align-items: stretch; }
 .attachment-button, .attachment-save-button { padding: 9px 12px; border: 1px solid #ccd5df; color: #344052; background: white; }
 .attachment-button { border-radius: 8px 0 0 8px; }

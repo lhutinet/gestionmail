@@ -1,1 +1,90 @@
-[]
+[
+  {
+    "id": "43fea933-553c-455f-911f-74a27a22a7b7",
+    "title": "Brouillons automatiques et protection contre la fermeture",
+    "category": "Rédaction",
+    "done": true,
+    "createdAt": "2026-10-28T18:05:53.832Z",
+    "updatedAt": "2026-10-29T10:44:15.897Z"
+  },
+  {
+    "id": "d14d255e-c895-47d0-a308-bb39bfd87ef3",
+    "title": "Conserver les messages envoyés",
+    "category": "Messagerie",
+    "done": true,
+    "createdAt": "2026-10-28T18:05:53.832Z",
+    "updatedAt": "2026-10-29T10:44:15.897Z"
+  },
+  {
+    "id": "1cb9152b-b1db-48bc-8bb8-ba6059fb450d",
+    "title": "Sélection et actions multiples sur les mails",
+    "category": "Messagerie",
+    "done": true,
+    "createdAt": "2026-10-28T18:05:53.832Z",
+    "updatedAt": "2026-10-29T10:44:15.897Z"
+  },
+  {
+    "id": "c53894d1-3594-4bd1-bbc9-19723df86e86",
+    "title": "Recherche globale dans tous les comptes et dossiers locaux",
+    "category": "Recherche",
+    "done": true,
+    "createdAt": "2026-10-28T18:05:53.832Z",
+    "updatedAt": "2026-10-29T10:44:15.897Z"
+  },
+  {
+    "id": "1a8a5794-2dda-4c48-8256-9a9969fcf52c",
+    "title": "Annulation, doublons et suppression récursive des dossiers locaux",
+    "category": "Stockage local",
+    "done": true,
+    "createdAt": "2026-10-28T18:05:53.832Z",
+    "updatedAt": "2026-10-29T10:44:15.897Z"
+  },
+  {
+    "id": "d09f1e50-3ac0-4843-a117-442f90f1365f",
+    "title": "Importer, exporter et fusionner les contacts",
+    "category": "Contacts",
+    "done": true,
+    "createdAt": "2026-10-28T18:05:53.832Z",
+    "updatedAt": "2026-10-29T10:44:15.897Z"
+  },
+  {
+    "id": "69daf8fb-1944-40fb-b50f-98bc6ae21b51",
+    "title": "Signatures, images et modèles de messages",
+    "category": "Rédaction",
+    "done": true,
+    "createdAt": "2026-10-28T18:05:53.832Z",
+    "updatedAt": "2026-10-29T10:44:15.897Z"
+  },
+  {
+    "id": "64b22a17-db21-47d1-a8ce-f61bd551ef27",
+    "title": "Règles de tri automatique des messages",
+    "category": "Automatisation",
+    "done": true,
+    "createdAt": "2026-10-28T18:05:53.832Z",
+    "updatedAt": "2026-10-29T10:44:15.897Z"
+  },
+  {
+    "id": "58cbcb14-922b-4ccd-9c1c-a729e7568d0e",
+    "title": "permettre de deplacer l'ordre des  favoris en glisser deplacer",
+    "category": "Général",
+    "done": true,
+    "createdAt": "2026-10-28T18:11:28.703Z",
+    "updatedAt": "2026-10-29T10:44:15.897Z"
+  },
+  {
+    "id": "7ca81ee5-fa2b-4eea-8e70-a452ddc89c03",
+    "title": "mettre le bouton fichier attacher en haut du mail et mieux faire le html",
+    "category": "Général",
+    "done": true,
+    "createdAt": "2026-11-03T08:00:49.235Z",
+    "updatedAt": "2026-11-03T08:00:49.235Z"
+  },
+  {
+    "id": "71f5f547-921a-4841-807d-b12de2a89333",
+    "title": "faire une copie des mail envoyer dans envoyé",
+    "category": "Général",
+    "done": true,
+    "createdAt": "2026-11-03T09:26:44.061Z",
+    "updatedAt": "2026-11-03T09:26:44.061Z"
+  }
+]

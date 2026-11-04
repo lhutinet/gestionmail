@@ -595,17 +595,20 @@ function getMessage(id) {
   const safeHtml = message.htmlBody ? sanitizeHtml(message.htmlBody, {
     allowedTags: [
       'p', 'div', 'span', 'br', 'hr', 'b', 'strong', 'i', 'em', 'u', 's',
-      'blockquote', 'pre', 'code', 'ul', 'ol', 'li',
+      'small', 'big', 'sub', 'sup', 'center', 'font',
+      'blockquote', 'pre', 'code', 'ul', 'ol', 'li', 'dl', 'dt', 'dd',
       'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td',
       'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'a', 'img'
     ],
     allowedAttributes: {
-      '*': ['style'],
+      '*': ['style', 'align', 'dir', 'lang', 'title'],
       a: ['href', 'title'],
-      table: ['cellpadding', 'cellspacing'],
-      th: ['colspan', 'rowspan'],
-      td: ['colspan', 'rowspan'],
-      img: ['src', 'data-remote-src', 'alt', 'title', 'width', 'height']
+      font: ['face', 'size', 'color'],
+      table: ['cellpadding', 'cellspacing', 'border', 'width', 'height', 'align', 'bgcolor', 'style'],
+      tr: ['align', 'valign', 'bgcolor', 'style'],
+      th: ['colspan', 'rowspan', 'align', 'valign', 'width', 'height', 'bgcolor', 'style'],
+      td: ['colspan', 'rowspan', 'align', 'valign', 'width', 'height', 'bgcolor', 'style'],
+      img: ['src', 'data-remote-src', 'alt', 'title', 'width', 'height', 'align', 'style']
     },
     allowedSchemes: ['http', 'https', 'mailto'],
     allowedSchemesByTag: { img: ['data'] },
@@ -618,13 +621,45 @@ function getMessage(id) {
         'font-weight': [/^(?:normal|bold|[1-9]00)$/i],
         'font-style': [/^(?:normal|italic|oblique)$/i],
         'text-decoration': [/^(?:none|underline|line-through)(?:\s+solid)?$/i],
-        'text-align': [/^(?:left|center|right|justify)$/i]
+        'text-align': [/^(?:left|center|right|justify)$/i],
+        'text-transform': [/^(?:none|capitalize|uppercase|lowercase)$/i],
+        'line-height': [/^(?:normal|\d+(?:\.\d+)?(?:px|pt|em|rem|%)?)$/i],
+        'letter-spacing': [/^(?:normal|-?\d+(?:\.\d+)?(?:px|pt|em|rem))$/i],
+        'vertical-align': [/^(?:baseline|middle|top|bottom|text-top|text-bottom|sub|super|-?\d+(?:\.\d+)?(?:px|pt|em|rem|%))$/i],
+        width: [/^(?:auto|\d+(?:\.\d+)?(?:px|pt|em|rem|%))$/i],
+        'min-width': [/^(?:auto|\d+(?:\.\d+)?(?:px|pt|em|rem|%))$/i],
+        'max-width': [/^(?:none|\d+(?:\.\d+)?(?:px|pt|em|rem|%))$/i],
+        height: [/^(?:auto|\d+(?:\.\d+)?(?:px|pt|em|rem|%))$/i],
+        'min-height': [/^(?:auto|\d+(?:\.\d+)?(?:px|pt|em|rem|%))$/i],
+        'max-height': [/^(?:none|\d+(?:\.\d+)?(?:px|pt|em|rem|%))$/i],
+        margin: [/^(?:auto|-?\d+(?:\.\d+)?(?:px|pt|em|rem|%)?)(?:\s+(?:auto|-?\d+(?:\.\d+)?(?:px|pt|em|rem|%)?)){0,3}$/i],
+        'margin-top': [/^(?:auto|-?\d+(?:\.\d+)?(?:px|pt|em|rem|%)?)$/i],
+        'margin-right': [/^(?:auto|-?\d+(?:\.\d+)?(?:px|pt|em|rem|%)?)$/i],
+        'margin-bottom': [/^(?:auto|-?\d+(?:\.\d+)?(?:px|pt|em|rem|%)?)$/i],
+        'margin-left': [/^(?:auto|-?\d+(?:\.\d+)?(?:px|pt|em|rem|%)?)$/i],
+        padding: [/^\d+(?:\.\d+)?(?:px|pt|em|rem|%)?(?:\s+\d+(?:\.\d+)?(?:px|pt|em|rem|%)?){0,3}$/i],
+        'padding-top': [/^\d+(?:\.\d+)?(?:px|pt|em|rem|%)?$/i],
+        'padding-right': [/^\d+(?:\.\d+)?(?:px|pt|em|rem|%)?$/i],
+        'padding-bottom': [/^\d+(?:\.\d+)?(?:px|pt|em|rem|%)?$/i],
+        'padding-left': [/^\d+(?:\.\d+)?(?:px|pt|em|rem|%)?$/i],
+        border: [/^(?!.*(?:url|expression|javascript))[-#(),.%\w\s]+$/i],
+        'border-top': [/^(?!.*(?:url|expression|javascript))[-#(),.%\w\s]+$/i],
+        'border-right': [/^(?!.*(?:url|expression|javascript))[-#(),.%\w\s]+$/i],
+        'border-bottom': [/^(?!.*(?:url|expression|javascript))[-#(),.%\w\s]+$/i],
+        'border-left': [/^(?!.*(?:url|expression|javascript))[-#(),.%\w\s]+$/i],
+        'border-collapse': [/^(?:collapse|separate)$/i],
+        'border-spacing': [/^\d+(?:\.\d+)?(?:px|pt|em|rem)(?:\s+\d+(?:\.\d+)?(?:px|pt|em|rem))?$/i],
+        'border-radius': [/^\d+(?:\.\d+)?(?:px|pt|em|rem|%)(?:\s+\d+(?:\.\d+)?(?:px|pt|em|rem|%)){0,3}$/i],
+        'white-space': [/^(?:normal|nowrap|pre|pre-wrap|pre-line)$/i],
+        'word-break': [/^(?:normal|break-all|keep-all|break-word)$/i],
+        'word-wrap': [/^(?:normal|break-word)$/i],
+        'list-style-type': [/^(?:none|disc|circle|square|decimal|lower-alpha|upper-alpha|lower-roman|upper-roman)$/i]
       }
     },
     transformTags: {
       img: (_tagName, attributes) => {
         const next = {};
-        for (const key of ['alt', 'title', 'width', 'height']) {
+        for (const key of ['alt', 'title', 'width', 'height', 'align', 'style']) {
           if (attributes[key]) next[key] = attributes[key];
         }
         let source = String(attributes.src || '').trim();

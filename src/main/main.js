@@ -506,7 +506,7 @@ app.whenReady().then(async () => {
       storeMessage({
         accountId: '__smoke__', remoteId: 'test', folder: 'INBOX',
         subject: 'Test', from: 'Expéditeur <expediteur@exemple.test>', text: 'Test',
-        html: '<p style="text-align:center;color:#123456">Contenu sûr</p><script>alert(1)</script><a href="javascript:alert(1)">Lien</a><img src="cid:logo@test"><img src="https://example.test/pixel.png">',
+        html: '<div style="font-family:Arial;font-size:18px;line-height:1.4;padding:12px;margin:4px;width:80%;border:1px solid #123456;position:fixed"><p style="text-align:center;color:#123456">Contenu sûr</p><font face="Georgia" size="4" color="#654321">Style historique</font></div><script>alert(1)</script><a href="javascript:alert(1)">Lien</a><img src="cid:logo@test" style="width:32px;height:32px"><img src="https://example.test/pixel.png">',
         attachments: [
           { filename: 'test.txt', content: Buffer.from('ok') },
           { filename: 'logo.png', contentType: 'image/png', cid: 'logo@test', content: Buffer.from([137, 80, 78, 71]) }
@@ -519,6 +519,13 @@ app.whenReady().then(async () => {
         smokeAttachment.content.toString() !== 'ok' ||
         !smokeMessage.htmlBody.includes('Contenu sûr') ||
          !smokeMessage.htmlBody.includes('text-align:center') ||
+        !smokeMessage.htmlBody.includes('font-family:Arial') ||
+        !smokeMessage.htmlBody.includes('line-height:1.4') ||
+        !smokeMessage.htmlBody.includes('padding:12px') ||
+        !smokeMessage.htmlBody.includes('border:1px solid #123456') ||
+        !smokeMessage.htmlBody.includes('<font face="Georgia" size="4" color="#654321">') ||
+        !smokeMessage.htmlBody.includes('style="width:32px;height:32px"') ||
+        smokeMessage.htmlBody.includes('position:fixed') ||
          smokeMessage.htmlBody.includes('javascript:') ||
         /<script/i.test(smokeMessage.htmlBody) ||
         !smokeMessage.htmlBody.includes('src="data:image/png;base64,') ||
@@ -664,6 +671,29 @@ app.whenReady().then(async () => {
       if (updatedAccount.name !== 'Compte modifié' || (await getAccountWithPassword(smokeAccount.id)).password !== 'secret-test') {
         throw new Error('Échec du contrôle de modification du compte.');
       }
+      const sentAttachmentPath = path.join(app.getPath('userData'), 'piece-jointe-envoyee.txt');
+      fs.writeFileSync(sentAttachmentPath, 'Pièce jointe envoyée', 'utf8');
+      const sentCopy = storeSentMessage(smokeAccount, {
+        to: 'destinataire@example.test',
+        cc: 'copie@example.test',
+        subject: 'Message envoyé test',
+        body: 'Copie locale du message envoyé',
+        htmlBody: '<p>Copie locale du <strong>message envoyé</strong></p>',
+        attachments: [{ path: sentAttachmentPath }]
+      });
+      const sentFolder = listLocalFolders(smokeAccount.id, smokeAccount.email, smokeAccount.localDirectory)
+        .find((folder) => folder.id === sentCopy.folderId);
+      const storedSentMessage = getMessage(sentCopy.id);
+      if (
+        sentFolder?.name !== 'Envoyés' ||
+        storedSentMessage.subject !== 'Message envoyé test' ||
+        storedSentMessage.attachments.length !== 1 ||
+        !fs.existsSync(sentCopy.path)
+      ) {
+        throw new Error('Échec du contrôle de la copie des messages envoyés.');
+      }
+      removeLocalMessage(sentCopy.id);
+      fs.rmSync(sentAttachmentPath, { force: true });
       const smokeTodo = saveTodo({ title: 'TODO partagée', category: 'Test' }, smokeAccount.localDirectory);
       if (
         Object.hasOwn(smokeTodo, 'priority') ||
