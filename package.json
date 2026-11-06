@@ -1,6 +1,6 @@
 {
   "name": "monmail",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "Client de messagerie Windows local",
   "author": "Monmail",

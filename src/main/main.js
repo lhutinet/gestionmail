@@ -162,6 +162,31 @@ function updateErrorMessage(error) {
   return `Mise à jour impossible : ${message}`;
 }
 
+function safeExternalUrl(value) {
+  try {
+    const url = new URL(String(value || '').trim());
+    return ['http:', 'https:', 'mailto:'].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function allowExternalLinks(window) {
+  const open = (value) => {
+    const url = safeExternalUrl(value);
+    if (!url) return;
+    shell.openExternal(url).catch((error) => console.warn(`Ouverture du lien impossible : ${error.message}`));
+  };
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    open(url);
+    return { action: 'deny' };
+  });
+  window.webContents.on('will-navigate', (event, url) => {
+    event.preventDefault();
+    open(url);
+  });
+}
+
 async function checkForUpdates(automatic = false) {
   if (!app.isPackaged) return { state: 'development', message: 'La recherche de mise à jour fonctionne dans la version Windows installée.' };
   autoUpdater.autoDownload = false;
@@ -318,8 +343,7 @@ function createWindow() {
   });
 
   window.removeMenu();
-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  window.webContents.on('will-navigate', (event) => event.preventDefault());
+  allowExternalLinks(window);
   window.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   window.webContents.once('did-finish-load', () => {
     startupMetrics.windowReadyMs = Math.round(performance.now() - startupStartedAt);
@@ -451,8 +475,7 @@ function openMessageWindow(messageId) {
   });
 
   window.removeMenu();
-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  window.webContents.on('will-navigate', (event) => event.preventDefault());
+  allowExternalLinks(window);
   window.loadFile(path.join(__dirname, '..', 'renderer', 'message-window.html'), {
     query: { id: String(messageId) }
   });
@@ -501,12 +524,18 @@ app.whenReady().then(async () => {
   if (restore.restored) console.info(`Sauvegarde restaurée. Copie précédente : ${restore.recoveryPath}`);
   if (isSmokeTest) {
     try {
+      if (
+        safeExternalUrl('https://example.test/path') !== 'https://example.test/path' ||
+        safeExternalUrl('mailto:test@example.test') !== 'mailto:test@example.test' ||
+        safeExternalUrl('javascript:alert(1)') !== null ||
+        safeExternalUrl('file:///C:/Windows/System32/calc.exe') !== null
+      ) throw new Error('Echec du contrôle de sécurité des liens externes.');
       if (trayIcon(12).isEmpty()) throw new Error('Échec de la génération de l’icône avec compteur non lu.');
       if (unreadBadgeIcon(12).isEmpty()) throw new Error('Échec de la génération du badge de mails non lus.');
       storeMessage({
         accountId: '__smoke__', remoteId: 'test', folder: 'INBOX',
         subject: 'Test', from: 'Expéditeur <expediteur@exemple.test>', text: 'Test',
-        html: '<div style="font-family:Arial;font-size:18px;line-height:1.4;padding:12px;margin:4px;width:80%;border:1px solid #123456;position:fixed"><p style="text-align:center;color:#123456">Contenu sûr</p><font face="Georgia" size="4" color="#654321">Style historique</font></div><script>alert(1)</script><a href="javascript:alert(1)">Lien</a><img src="cid:logo@test" style="width:32px;height:32px"><img src="https://example.test/pixel.png">',
+        html: '<div style="font-family:Arial;font-size:18px;line-height:1.4;padding:12px;margin:4px;width:80%;border:1px solid #123456;position:fixed"><p style="text-align:center;color:#123456">Contenu sûr</p><font face="Georgia" size="4" color="#654321">Style historique</font></div><script>alert(1)</script><a href="javascript:alert(1)">Lien bloqué</a><a href="https://example.test/path">Lien sûr</a><img src="cid:logo@test" style="width:32px;height:32px"><img src="https://example.test/pixel.png">',
         attachments: [
           { filename: 'test.txt', content: Buffer.from('ok') },
           { filename: 'logo.png', contentType: 'image/png', cid: 'logo@test', content: Buffer.from([137, 80, 78, 71]) }
@@ -525,6 +554,7 @@ app.whenReady().then(async () => {
         !smokeMessage.htmlBody.includes('border:1px solid #123456') ||
         !smokeMessage.htmlBody.includes('<font face="Georgia" size="4" color="#654321">') ||
         !smokeMessage.htmlBody.includes('style="width:32px;height:32px"') ||
+        !smokeMessage.htmlBody.includes('href="https://example.test/path"') ||
         smokeMessage.htmlBody.includes('position:fixed') ||
          smokeMessage.htmlBody.includes('javascript:') ||
         /<script/i.test(smokeMessage.htmlBody) ||
