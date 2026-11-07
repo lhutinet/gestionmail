@@ -40,6 +40,7 @@ function createBackup(parentDirectory) {
   const userData = app.getPath('userData');
   const settings = getSettings();
   for (const filename of USER_FILES) copyIfExists(path.join(userData, filename), path.join(root, 'profil', filename));
+  copyIfExists(path.join(userData, 'appearance'), path.join(root, 'profil', 'appearance'));
   copyTodoFiles(path.join(root, 'profil'));
   copyIfExists(path.join(settings.dataDirectory, 'messages.sqlite'), path.join(root, 'donnees', 'messages.sqlite'));
   copyIfExists(path.join(settings.dataDirectory, 'Dossiers locaux'), path.join(root, 'donnees', 'Dossiers locaux'));
@@ -89,6 +90,7 @@ function applyPendingRestore() {
   const recovery = path.join(userData, `avant-restauration-${new Date().toISOString().replace(/[:.]/g, '-')}`);
   fs.mkdirSync(recovery, { recursive: true });
   for (const filename of USER_FILES) copyIfExists(path.join(userData, filename), path.join(recovery, 'profil', filename));
+  copyIfExists(path.join(userData, 'appearance'), path.join(recovery, 'profil', 'appearance'));
   copyTodoFiles(path.join(recovery, 'profil'));
   copyIfExists(path.join(userData, 'settings.json'), path.join(recovery, 'profil', 'settings.json'));
   copyIfExists(path.join(currentSettings.dataDirectory, 'messages.sqlite'), path.join(recovery, 'donnees', 'messages.sqlite'));
@@ -98,6 +100,7 @@ function applyPendingRestore() {
   }
 
   for (const filename of USER_FILES) copyIfExists(path.join(root, 'profil', filename), path.join(userData, filename));
+  copyIfExists(path.join(root, 'profil', 'appearance'), path.join(userData, 'appearance'));
   restoreTodoFiles(path.join(root, 'profil'));
   const backedSettings = { ...currentSettings, ...JSON.parse(JSON.stringify(validateBackup(root).settings || {})), dataDirectory: currentSettings.dataDirectory };
   fs.writeFileSync(path.join(userData, 'settings.json'), JSON.stringify(backedSettings, null, 2), 'utf8');

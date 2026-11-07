@@ -259,18 +259,29 @@ function applyInterfaceColor(value) {
   });
   const luminance = .2126 * linear[0] + .7152 * linear[1] + .0722 * linear[2];
   const root = document.documentElement.style;
+  const darkSkin = ['graphite', 'neon'].includes(document.documentElement.dataset.skin);
   root.setProperty('--accent-color', color);
   root.setProperty('--accent-contrast', (luminance + .05) / .064 >= 1.05 / (luminance + .05) ? '#102033' : '#ffffff');
-  root.setProperty('--accent-strong', mix([0, 0, 0], .38));
-  root.setProperty('--accent-mid', mix([255, 255, 255], .38));
-  root.setProperty('--accent-soft', mix([255, 255, 255], .82));
+  root.setProperty('--accent-strong', mix(darkSkin ? [255, 255, 255] : [0, 0, 0], .38));
+  root.setProperty('--accent-mid', mix([255, 255, 255], darkSkin ? .28 : .38));
+  root.setProperty('--accent-soft', mix(darkSkin ? [18, 22, 28] : [255, 255, 255], .82));
   root.setProperty('--accent-ring', `${color}38`);
-  root.setProperty('--accent-ink', mix([16, 32, 51], .68));
+  root.setProperty('--accent-ink', mix(darkSkin ? [255, 255, 255] : [16, 32, 51], darkSkin ? .75 : .68));
 }
 
 function applyWindowSettings(settings) {
   const fontSize = [13, 14, 15, 16, 17].includes(Number(settings.fontSize)) ? Number(settings.fontSize) : 15;
   document.documentElement.style.setProperty('--ui-font-size', `${fontSize - 2}px`);
+  document.documentElement.dataset.skin = ['classic', 'ocean', 'graphite', 'sand', 'neon', 'candy', 'forest'].includes(String(settings.interfaceSkin))
+    ? String(settings.interfaceSkin)
+    : 'classic';
+  const radius = Math.min(28, Math.max(4, Number(settings.cornerRadius) || 9));
+  const dim = Math.min(70, Math.max(0, Number(settings.backgroundDim) || 0));
+  const backgroundUrl = String(settings.backgroundImageUrl || '');
+  document.documentElement.style.setProperty('--ui-radius', `${radius}px`);
+  document.documentElement.style.setProperty('--wallpaper-dim', String(dim / 100));
+  document.documentElement.style.setProperty('--custom-background-image', backgroundUrl ? `url(${JSON.stringify(backgroundUrl)})` : 'none');
+  document.documentElement.classList.toggle('has-wallpaper', Boolean(backgroundUrl));
   applyInterfaceColor(settings.interfaceColor);
 }
 

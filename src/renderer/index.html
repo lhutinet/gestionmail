@@ -411,6 +411,33 @@
               <option value="17">Grande</option>
             </select>
           </label>
+          <fieldset class="skin-fieldset">
+            <legend>Apparence générale</legend>
+            <div class="skin-options">
+              <label class="skin-option"><input type="radio" name="interfaceSkin" value="classic"><span class="skin-preview skin-preview-classic" aria-hidden="true"><i></i><i></i><i></i></span><strong>Classique</strong></label>
+              <label class="skin-option"><input type="radio" name="interfaceSkin" value="ocean"><span class="skin-preview skin-preview-ocean" aria-hidden="true"><i></i><i></i><i></i></span><strong>Océan</strong></label>
+              <label class="skin-option"><input type="radio" name="interfaceSkin" value="graphite"><span class="skin-preview skin-preview-graphite" aria-hidden="true"><i></i><i></i><i></i></span><strong>Graphite</strong></label>
+              <label class="skin-option"><input type="radio" name="interfaceSkin" value="sand"><span class="skin-preview skin-preview-sand" aria-hidden="true"><i></i><i></i><i></i></span><strong>Sable</strong></label>
+              <label class="skin-option"><input type="radio" name="interfaceSkin" value="neon"><span class="skin-preview skin-preview-neon" aria-hidden="true"><i></i><i></i><i></i></span><strong>Néon</strong></label>
+              <label class="skin-option"><input type="radio" name="interfaceSkin" value="candy"><span class="skin-preview skin-preview-candy" aria-hidden="true"><i></i><i></i><i></i></span><strong>Bonbon</strong></label>
+              <label class="skin-option"><input type="radio" name="interfaceSkin" value="forest"><span class="skin-preview skin-preview-forest" aria-hidden="true"><i></i><i></i><i></i></span><strong>Forêt</strong></label>
+            </div>
+            <small>Le skin est prévisualisé immédiatement. La couleur principale reste personnalisable.</small>
+          </fieldset>
+          <fieldset class="appearance-customization">
+            <legend>Personnaliser le skin</legend>
+            <label>Arrondi des éléments <output id="corner-radius-value">9 px</output>
+              <input name="cornerRadius" type="range" min="4" max="28" step="1" value="9">
+            </label>
+            <label>Assombrissement du fond <output id="background-dim-value">20 %</output>
+              <input name="backgroundDim" type="range" min="0" max="70" step="5" value="20">
+            </label>
+            <div class="background-image-control">
+              <div><strong>Image de fond</strong><small id="background-image-name">Aucune image personnelle</small></div>
+              <button id="choose-background-image" class="secondary icon-action" type="button" title="Choisir une image de fond" aria-label="Choisir une image de fond">▧</button>
+              <button id="remove-background-image" class="secondary icon-action" type="button" title="Retirer l’image de fond" aria-label="Retirer l’image de fond">×</button>
+            </div>
+          </fieldset>
           <label>Couleur principale de l’interface
             <span class="interface-color-control">
               <input name="interfaceColor" type="color" value="#6ee7d2" aria-label="Couleur principale">

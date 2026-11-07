@@ -159,12 +159,19 @@ let currentSettings = {
   autoSyncMinutes: 0,
   notificationsEnabled: true,
   fontSize: 15,
+  interfaceSkin: 'classic',
   interfaceColor: '#6ee7d2',
+  cornerRadius: 9,
+  backgroundImage: '',
+  backgroundImageUrl: '',
+  backgroundDim: 20,
   minimizeToTray: false,
   groupConversations: true,
   autoUpdateEnabled: true,
   dataDirectory: ''
 };
+let pendingBackgroundImage = '';
+let pendingBackgroundImageUrl = '';
 const lastAccountStorageKey = 'gestionmail.lastAccountId';
 const columnWidthsStorageKey = 'gestionmail.columnWidths';
 const localSidebarCollapsedStorageKey = 'gestionmail.localSidebarCollapsed';
@@ -174,6 +181,23 @@ let columnWidths = { ...defaultColumnWidths };
 function applyInterfaceFontSize(value) {
   const size = [13, 14, 15, 16, 17].includes(Number(value)) ? Number(value) : 15;
   document.documentElement.style.setProperty('--ui-font-size', `${size - 2}px`);
+}
+
+function applyInterfaceSkin(value) {
+  const skin = ['classic', 'ocean', 'graphite', 'sand', 'neon', 'candy', 'forest'].includes(String(value)) ? String(value) : 'classic';
+  document.documentElement.dataset.skin = skin;
+}
+
+function applyInterfaceAppearance(settings) {
+  applyInterfaceSkin(settings.interfaceSkin);
+  const radius = Math.min(28, Math.max(4, Number(settings.cornerRadius) || 9));
+  const dim = Math.min(70, Math.max(0, Number(settings.backgroundDim) || 0));
+  const backgroundUrl = String(settings.backgroundImageUrl || '');
+  const root = document.documentElement;
+  root.style.setProperty('--ui-radius', `${radius}px`);
+  root.style.setProperty('--wallpaper-dim', String(dim / 100));
+  root.style.setProperty('--custom-background-image', backgroundUrl ? `url(${JSON.stringify(backgroundUrl)})` : 'none');
+  root.classList.toggle('has-wallpaper', Boolean(backgroundUrl));
 }
 
 function applyInterfaceColor(value) {
@@ -189,14 +213,15 @@ function applyInterfaceColor(value) {
   const darkContrast = (luminance + .05) / (.014 + .05);
   const lightContrast = 1.05 / (luminance + .05);
   const root = document.documentElement.style;
+  const darkSkin = ['graphite', 'neon'].includes(document.documentElement.dataset.skin);
   root.setProperty('--accent-color', color);
   root.setProperty('--accent-contrast', darkContrast >= lightContrast ? '#102033' : '#ffffff');
-  root.setProperty('--accent-strong', mix([0, 0, 0], .38));
-  root.setProperty('--accent-mid', mix([255, 255, 255], .38));
-  root.setProperty('--accent-soft', mix([255, 255, 255], .82));
-  root.setProperty('--accent-softer', mix([255, 255, 255], .9));
+  root.setProperty('--accent-strong', mix(darkSkin ? [255, 255, 255] : [0, 0, 0], .38));
+  root.setProperty('--accent-mid', mix([255, 255, 255], darkSkin ? .28 : .38));
+  root.setProperty('--accent-soft', mix(darkSkin ? [18, 22, 28] : [255, 255, 255], .82));
+  root.setProperty('--accent-softer', mix(darkSkin ? [18, 22, 28] : [255, 255, 255], .9));
   root.setProperty('--accent-ring', `${color}38`);
-  root.setProperty('--accent-ink', mix([16, 32, 51], .68));
+  root.setProperty('--accent-ink', mix(darkSkin ? [255, 255, 255] : [16, 32, 51], darkSkin ? .75 : .68));
 }
 
 let contextMenu = null;
@@ -2772,7 +2797,16 @@ async function openSettingsDialog() {
     renderAccounts();
     settingsForm.elements.autoSyncMinutes.value = String(currentSettings.autoSyncMinutes);
     settingsForm.elements.fontSize.value = String(currentSettings.fontSize);
+    settingsForm.elements.interfaceSkin.value = currentSettings.interfaceSkin || 'classic';
     settingsForm.elements.interfaceColor.value = currentSettings.interfaceColor || '#6ee7d2';
+    settingsForm.elements.cornerRadius.value = String(currentSettings.cornerRadius ?? 9);
+    settingsForm.elements.backgroundDim.value = String(currentSettings.backgroundDim ?? 20);
+    document.querySelector('#corner-radius-value').value = `${currentSettings.cornerRadius ?? 9} px`;
+    document.querySelector('#background-dim-value').value = `${currentSettings.backgroundDim ?? 20} %`;
+    pendingBackgroundImage = currentSettings.backgroundImage || '';
+    pendingBackgroundImageUrl = currentSettings.backgroundImageUrl || '';
+    document.querySelector('#background-image-name').textContent = pendingBackgroundImage || 'Aucune image personnelle';
+    document.querySelector('#remove-background-image').disabled = !pendingBackgroundImage;
     settingsForm.elements.notificationsEnabled.checked = Boolean(currentSettings.notificationsEnabled);
     settingsForm.elements.minimizeToTray.checked = Boolean(currentSettings.minimizeToTray);
     settingsForm.elements.groupConversations.checked = currentSettings.groupConversations !== false;
@@ -3680,7 +3714,46 @@ recipientPickerForm.addEventListener('submit', (event) => {
 document.querySelector('#close-settings').addEventListener('click', () => settingsDialog.close());
 document.querySelector('#cancel-settings').addEventListener('click', () => settingsDialog.close());
 settingsForm.elements.interfaceColor.addEventListener('input', (event) => applyInterfaceColor(event.target.value));
-settingsDialog.addEventListener('close', () => applyInterfaceColor(currentSettings.interfaceColor));
+[...settingsForm.elements.interfaceSkin].forEach((input) => input.addEventListener('change', (event) => {
+  applyInterfaceSkin(event.target.value);
+  applyInterfaceColor(settingsForm.elements.interfaceColor.value);
+}));
+settingsForm.elements.cornerRadius.addEventListener('input', (event) => {
+  document.querySelector('#corner-radius-value').value = `${event.target.value} px`;
+  applyInterfaceAppearance({ ...currentSettings, interfaceSkin: settingsForm.elements.interfaceSkin.value, cornerRadius: event.target.value, backgroundDim: settingsForm.elements.backgroundDim.value, backgroundImageUrl: pendingBackgroundImageUrl });
+  applyInterfaceColor(settingsForm.elements.interfaceColor.value);
+});
+settingsForm.elements.backgroundDim.addEventListener('input', (event) => {
+  document.querySelector('#background-dim-value').value = `${event.target.value} %`;
+  applyInterfaceAppearance({ ...currentSettings, interfaceSkin: settingsForm.elements.interfaceSkin.value, cornerRadius: settingsForm.elements.cornerRadius.value, backgroundDim: event.target.value, backgroundImageUrl: pendingBackgroundImageUrl });
+  applyInterfaceColor(settingsForm.elements.interfaceColor.value);
+});
+document.querySelector('#choose-background-image').addEventListener('click', async () => {
+  try {
+    const selected = await window.gestionMail.chooseAppearanceBackground();
+    if (!selected) return;
+    pendingBackgroundImage = selected.filename;
+    pendingBackgroundImageUrl = selected.url;
+    document.querySelector('#background-image-name').textContent = selected.filename;
+    document.querySelector('#remove-background-image').disabled = false;
+    applyInterfaceAppearance({ ...currentSettings, interfaceSkin: settingsForm.elements.interfaceSkin.value, cornerRadius: settingsForm.elements.cornerRadius.value, backgroundDim: settingsForm.elements.backgroundDim.value, backgroundImageUrl: pendingBackgroundImageUrl });
+    applyInterfaceColor(settingsForm.elements.interfaceColor.value);
+  } catch (error) {
+    settingsError.textContent = readableError(error);
+  }
+});
+document.querySelector('#remove-background-image').addEventListener('click', () => {
+  pendingBackgroundImage = '';
+  pendingBackgroundImageUrl = '';
+  document.querySelector('#background-image-name').textContent = 'Aucune image personnelle';
+  document.querySelector('#remove-background-image').disabled = true;
+  applyInterfaceAppearance({ ...currentSettings, interfaceSkin: settingsForm.elements.interfaceSkin.value, cornerRadius: settingsForm.elements.cornerRadius.value, backgroundDim: settingsForm.elements.backgroundDim.value, backgroundImageUrl: '' });
+  applyInterfaceColor(settingsForm.elements.interfaceColor.value);
+});
+settingsDialog.addEventListener('close', () => {
+  applyInterfaceAppearance(currentSettings);
+  applyInterfaceColor(currentSettings.interfaceColor);
+});
 settingsForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   settingsError.textContent = 'Enregistrement des paramètres…';
@@ -3689,7 +3762,11 @@ settingsForm.addEventListener('submit', async (event) => {
     const values = {
       autoSyncMinutes: Number(settingsForm.elements.autoSyncMinutes.value),
       fontSize: Number(settingsForm.elements.fontSize.value),
+      interfaceSkin: settingsForm.elements.interfaceSkin.value,
       interfaceColor: settingsForm.elements.interfaceColor.value,
+      cornerRadius: Number(settingsForm.elements.cornerRadius.value),
+      backgroundImage: pendingBackgroundImage,
+      backgroundDim: Number(settingsForm.elements.backgroundDim.value),
       notificationsEnabled: settingsForm.elements.notificationsEnabled.checked,
       minimizeToTray: settingsForm.elements.minimizeToTray.checked,
       groupConversations: settingsForm.elements.groupConversations.checked,
@@ -3698,6 +3775,7 @@ settingsForm.addEventListener('submit', async (event) => {
     const result = await window.gestionMail.saveSettings(values);
     currentSettings = result.settings;
     applyInterfaceFontSize(currentSettings.fontSize);
+    applyInterfaceAppearance(currentSettings);
     applyInterfaceColor(currentSettings.interfaceColor);
     autoSyncSelect.value = String(currentSettings.autoSyncMinutes);
     configureAutoSync();
@@ -3936,6 +4014,7 @@ window.addEventListener('focus', async () => {
 async function initialiseApplication() {
   currentSettings = await window.gestionMail.getSettings();
   applyInterfaceFontSize(currentSettings.fontSize);
+  applyInterfaceAppearance(currentSettings);
   applyInterfaceColor(currentSettings.interfaceColor);
   autoSyncSelect.value = String(currentSettings.autoSyncMinutes);
   configureAutoSync();

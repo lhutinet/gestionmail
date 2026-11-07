@@ -11,7 +11,11 @@ function defaults() {
     autoSyncMinutes: 0,
     notificationsEnabled: true,
     fontSize: 15,
+    interfaceSkin: 'classic',
     interfaceColor: '#6ee7d2',
+    cornerRadius: 9,
+    backgroundImage: '',
+    backgroundDim: 20,
     minimizeToTray: false,
     groupConversations: true,
     autoUpdateEnabled: true,
@@ -31,6 +35,7 @@ function getSettings() {
 function saveSettings(patch) {
   const allowedIntervals = [0, 1, 5, 15, 30];
   const allowedFontSizes = [13, 14, 15, 16, 17];
+  const allowedInterfaceSkins = ['classic', 'ocean', 'graphite', 'sand', 'neon', 'candy', 'forest'];
   const current = getSettings();
   const next = {
     ...current,
@@ -43,9 +48,21 @@ function saveSettings(patch) {
     fontSize: allowedFontSizes.includes(Number(patch.fontSize))
       ? Number(patch.fontSize)
       : current.fontSize,
+    interfaceSkin: allowedInterfaceSkins.includes(String(patch.interfaceSkin || ''))
+      ? String(patch.interfaceSkin)
+      : current.interfaceSkin,
     interfaceColor: /^#[0-9a-f]{6}$/i.test(String(patch.interfaceColor || ''))
       ? String(patch.interfaceColor).toLowerCase()
       : current.interfaceColor,
+    cornerRadius: Number.isInteger(Number(patch.cornerRadius)) && Number(patch.cornerRadius) >= 4 && Number(patch.cornerRadius) <= 28
+      ? Number(patch.cornerRadius)
+      : current.cornerRadius,
+    backgroundImage: patch.backgroundImage === undefined
+      ? current.backgroundImage
+      : (/^background\.(?:png|jpe?g|webp|gif)$/i.test(String(patch.backgroundImage || '')) ? String(patch.backgroundImage) : ''),
+    backgroundDim: Number.isInteger(Number(patch.backgroundDim)) && Number(patch.backgroundDim) >= 0 && Number(patch.backgroundDim) <= 70
+      ? Number(patch.backgroundDim)
+      : current.backgroundDim,
     minimizeToTray: patch.minimizeToTray === undefined
       ? current.minimizeToTray
       : Boolean(patch.minimizeToTray),

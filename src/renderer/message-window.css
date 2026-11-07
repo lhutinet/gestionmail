@@ -1,4 +1,8 @@
 :root {
+  --ui-radius: 9px;
+  --wallpaper-dim: .2;
+  --custom-background-image: none;
+  --skin-wallpaper: none;
   color-scheme: light;
   font-family: "Segoe UI", system-ui, sans-serif;
   color: #1b2430;
@@ -59,3 +63,33 @@ dialog input { width: 100%; padding: 10px 11px; border: 1px solid #b8c5d2; borde
 .attachment-button:hover, .attachment-save-button:hover { position: relative; border-color: var(--accent-strong); background: var(--accent-soft); }
 .loading, .error { display: grid; min-height: 100%; place-items: center; color: #778395; text-align: center; }
 .error { color: #b42318; }
+
+/* Le skin choisi dans la fenêtre principale suit aussi les mails détachés. */
+:root {
+  --skin-canvas: #fafbfc;
+  --skin-surface: #ffffff;
+  --skin-surface-soft: #f2f6f9;
+  --skin-text: #263243;
+  --skin-text-muted: #5b6878;
+  --skin-border: #dfe4ea;
+}
+:root[data-skin="ocean"] { --skin-canvas: #eaf4f6; --skin-surface: #fafdfe; --skin-surface-soft: #e2f0f2; --skin-text: #19373e; --skin-text-muted: #55747b; --skin-border: #c9dfe3; }
+:root[data-skin="graphite"] { color-scheme: dark; --skin-canvas: #111318; --skin-surface: #1a1e25; --skin-surface-soft: #292f39; --skin-text: #e6eaf0; --skin-text-muted: #a1aab8; --skin-border: #353c48; }
+:root[data-skin="sand"] { --skin-canvas: #f3ecdf; --skin-surface: #fffaf1; --skin-surface-soft: #f3eadb; --skin-text: #3e3128; --skin-text-muted: #7b695b; --skin-border: #dfd1bd; }
+:root[data-skin="neon"] { color-scheme: dark; --skin-canvas: #12062c; --skin-surface: #251044; --skin-surface-soft: #321354; --skin-text: #fff5ff; --skin-text-muted: #c29cdb; --skin-border: #70468b; --skin-wallpaper: radial-gradient(circle at 15% 20%, #ff2ca055 0 10%, transparent 34%), radial-gradient(circle at 85% 80%, #19d9ff55 0 12%, transparent 38%), linear-gradient(135deg, #12062c, #251044 48%, #071f36); }
+:root[data-skin="candy"] { --skin-canvas: #fff0f7; --skin-surface: #fff9fc; --skin-surface-soft: #ffe9f5; --skin-text: #522944; --skin-text-muted: #8a607b; --skin-border: #efbfd9; --skin-wallpaper: radial-gradient(circle at 12% 18%, #ffd166aa 0 8%, transparent 25%), radial-gradient(circle at 88% 22%, #7bdff2aa 0 9%, transparent 28%), linear-gradient(145deg, #ffb5d8, #d7bbff 52%, #a8e6ef); }
+:root[data-skin="forest"] { --skin-canvas: #edf4e8; --skin-surface: #f9fcf6; --skin-surface-soft: #e4efdd; --skin-text: #263a2b; --skin-text-muted: #607566; --skin-border: #bfd0b7; --skin-wallpaper: radial-gradient(ellipse at 18% 88%, #82b36666 0 14%, transparent 38%), linear-gradient(135deg, #dcebd2, #a8c79b 48%, #5e8a68); }
+body { color: var(--skin-text); background-color: var(--skin-canvas); background-image: linear-gradient(rgb(0 0 0 / var(--wallpaper-dim)), rgb(0 0 0 / var(--wallpaper-dim))), var(--custom-background-image), var(--skin-wallpaper); background-position: center; background-size: cover; }
+.standalone-message { color: var(--skin-text); background: var(--skin-canvas); }
+:root:is([data-skin="neon"], [data-skin="candy"], [data-skin="forest"]) .standalone-message,
+:root.has-wallpaper .standalone-message { margin: 10px; width: calc(100% - 20px); height: calc(100% - 20px); border-radius: calc(var(--ui-radius) + 8px); background: color-mix(in srgb, var(--skin-surface) 88%, transparent); backdrop-filter: blur(12px); box-shadow: 0 12px 36px #07111f44; }
+.standalone-message h1, .message-body { color: var(--skin-text); }
+.message-headers { color: var(--skin-text-muted); border-color: var(--skin-border); }
+.address-chip, .remote-images-notice, .received-attachments { color: var(--skin-text-muted); border-color: var(--skin-border); background: var(--skin-surface-soft); }
+.standalone-contact-actions button, .remote-images-button, .attachment-button, .attachment-save-button { color: var(--skin-text); border-color: var(--skin-border); background: var(--skin-surface); }
+dialog { color: var(--skin-text); background: var(--skin-surface); }
+.dialog-heading h2, dialog label, .dialog-actions button { color: var(--skin-text); }
+.dialog-heading p { color: var(--skin-text-muted); }
+dialog input, .dialog-actions button { color: var(--skin-text); border-color: var(--skin-border); background: var(--skin-surface); }
+button, input, .address-chip, .remote-images-notice, .received-attachments, .attachment-button, .attachment-save-button { border-radius: var(--ui-radius); }
+dialog, .message-html { border-radius: calc(var(--ui-radius) + 4px); }

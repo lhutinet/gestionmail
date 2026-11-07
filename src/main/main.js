@@ -3,6 +3,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
 const zlib = require('node:zlib');
+const { pathToFileURL } = require('node:url');
 const { performance } = require('node:perf_hooks');
 const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, shell, Tray } = require('electron');
 const { simpleParser } = require('mailparser');
@@ -33,6 +34,17 @@ const folderCopyJobs = new Map();
 let localScanPromise = null;
 let updateAvailable = false;
 let updateDownloaded = false;
+
+function settingsForRenderer(settings = getSettings()) {
+  const filename = /^background\.(?:png|jpe?g|webp|gif)$/i.test(String(settings.backgroundImage || ''))
+    ? path.basename(settings.backgroundImage)
+    : '';
+  const backgroundPath = filename ? path.join(app.getPath('userData'), 'appearance', filename) : '';
+  return {
+    ...settings,
+    backgroundImageUrl: backgroundPath && fs.existsSync(backgroundPath) ? pathToFileURL(backgroundPath).href : ''
+  };
+}
 
 if (process.platform === 'win32') app.setAppUserModelId('fr.gestionmail.desktop');
 
@@ -414,10 +426,16 @@ function createWindow() {
             contextLabels,
             interfaceColor: rootStyle.getPropertyValue('--accent-color').trim(),
             interfaceContrast: rootStyle.getPropertyValue('--accent-contrast').trim(),
+            interfaceSoft: rootStyle.getPropertyValue('--accent-soft').trim(),
             interfaceFontSize: rootStyle.getPropertyValue('--ui-font-size').trim(),
+            interfaceSkin: document.documentElement.dataset.skin,
+            interfaceRadius: rootStyle.getPropertyValue('--ui-radius').trim(),
+            hasWallpaper: document.documentElement.classList.contains('has-wallpaper'),
             hasAdvancedSearch: Boolean(document.querySelector('#advanced-search-form input[name="dateFrom"]')),
             hasEditorBackground: Boolean(document.querySelector('#compose-background-color')),
             hasBackupActions: Boolean(document.querySelector('#create-backup')),
+            funSkinCount: document.querySelectorAll('input[name="interfaceSkin"][value="neon"], input[name="interfaceSkin"][value="candy"], input[name="interfaceSkin"][value="forest"]').length,
+            hasAppearanceControls: Boolean(document.querySelector('input[name="cornerRadius"]') && document.querySelector('#choose-background-image')),
             favoriteOrder
           };
         })()`);
@@ -428,6 +446,11 @@ function createWindow() {
           !colorResult.contextLabels.includes('Coller') ||
           colorResult.interfaceColor !== '#d04f85' ||
           colorResult.interfaceFontSize !== '12px' ||
+          colorResult.interfaceSkin !== 'graphite' ||
+          colorResult.interfaceSoft !== '#34202f' ||
+          colorResult.interfaceRadius !== '22px' ||
+          !colorResult.hasWallpaper ||
+          colorResult.funSkinCount !== 3 || !colorResult.hasAppearanceControls ||
           !['#102033', '#ffffff'].includes(colorResult.interfaceContrast) ||
           !colorResult.hasAdvancedSearch || !colorResult.hasEditorBackground || !colorResult.hasBackupActions ||
           JSON.stringify(colorResult.favoriteOrder) !== JSON.stringify(['INBOX', 'Archives'])
@@ -763,7 +786,10 @@ app.whenReady().then(async () => {
       const migrationFolder = createLocalFolder('Migration locale');
       copyMessageToLocal('__migration__:test', migrationFolder.id);
       const migration = changeDataDirectory(path.join(app.getPath('userData'), 'stockage-test'));
-      saveSettings({ autoSyncMinutes: 5, notificationsEnabled: false, fontSize: 14, interfaceColor: '#d04f85', minimizeToTray: true, groupConversations: false, autoUpdateEnabled: false });
+      const smokeAppearanceDirectory = path.join(app.getPath('userData'), 'appearance');
+      fs.mkdirSync(smokeAppearanceDirectory, { recursive: true });
+      fs.writeFileSync(path.join(smokeAppearanceDirectory, 'background.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
+      saveSettings({ autoSyncMinutes: 5, notificationsEnabled: false, fontSize: 14, interfaceSkin: 'graphite', interfaceColor: '#d04f85', cornerRadius: 22, backgroundImage: 'background.png', backgroundDim: 35, minimizeToTray: true, groupConversations: false, autoUpdateEnabled: false });
       const externalEmlPath = path.join(getLocalFolderPath(migrationFolder.id), 'message-externe.eml');
       fs.writeFileSync(
         externalEmlPath,
@@ -779,7 +805,11 @@ app.whenReady().then(async () => {
         getSettings().autoSyncMinutes !== 5 ||
         getSettings().notificationsEnabled !== false ||
         getSettings().fontSize !== 14 ||
+        getSettings().interfaceSkin !== 'graphite' ||
         getSettings().interfaceColor !== '#d04f85' ||
+        getSettings().cornerRadius !== 22 ||
+        getSettings().backgroundImage !== 'background.png' ||
+        getSettings().backgroundDim !== 35 ||
         getSettings().minimizeToTray !== true ||
         getSettings().groupConversations !== false ||
         getSettings().autoUpdateEnabled !== false
@@ -793,6 +823,7 @@ app.whenReady().then(async () => {
       if (
         !fs.existsSync(path.join(smokeBackup.path, 'manifest.json')) ||
         !fs.existsSync(path.join(smokeBackup.path, 'donnees', 'messages.sqlite')) ||
+        !fs.existsSync(path.join(smokeBackup.path, 'profil', 'appearance', 'background.png')) ||
         !fs.existsSync(path.join(smokeBackup.path, 'profil', 'todos.json')) ||
         !fs.existsSync(path.join(smokeBackup.path, 'profil', 'TODO.md'))
       ) throw new Error('Échec de la sauvegarde complète.');
@@ -1165,7 +1196,7 @@ app.whenReady().then(async () => {
     event.sender[command]();
     return { executed: true };
   });
-  ipcMain.handle('settings:get', () => getSettings());
+  ipcMain.handle('settings:get', () => settingsForRenderer());
   ipcMain.handle('app:version', () => app.getVersion());
   ipcMain.handle('backup:create', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
@@ -1200,6 +1231,25 @@ app.whenReady().then(async () => {
     });
     return result.canceled ? null : result.filePaths[0];
   });
+  ipcMain.handle('settings:choose-background', async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(owner, {
+      title: 'Choisir un fond d’écran pour Monmail',
+      defaultPath: app.getPath('pictures'),
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }]
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const source = result.filePaths[0];
+    const extension = path.extname(source).toLowerCase();
+    if (!['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(extension)) throw new Error('Format d’image non pris en charge.');
+    const appearanceDirectory = path.join(app.getPath('userData'), 'appearance');
+    fs.mkdirSync(appearanceDirectory, { recursive: true });
+    const filename = `background${extension}`;
+    const target = path.join(appearanceDirectory, filename);
+    if (path.resolve(source) !== path.resolve(target)) fs.copyFileSync(source, target);
+    return { filename, url: pathToFileURL(target).href };
+  });
   ipcMain.handle('settings:save', (_event, values) => {
     const current = getSettings();
     let migration = { changed: false, backupPath: null };
@@ -1210,16 +1260,21 @@ app.whenReady().then(async () => {
       autoSyncMinutes: values.autoSyncMinutes,
       notificationsEnabled: values.notificationsEnabled,
       fontSize: values.fontSize,
+      interfaceSkin: values.interfaceSkin,
       interfaceColor: values.interfaceColor,
+      cornerRadius: values.cornerRadius,
+      backgroundImage: values.backgroundImage,
+      backgroundDim: values.backgroundDim,
       minimizeToTray: values.minimizeToTray,
       groupConversations: values.groupConversations,
       autoUpdateEnabled: values.autoUpdateEnabled,
       dataDirectory: migration.dataDirectory || current.dataDirectory
     });
+    const rendererSettings = settingsForRenderer(settings);
     for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) window.webContents.send('settings:changed', settings);
+      if (!window.isDestroyed()) window.webContents.send('settings:changed', rendererSettings);
     }
-    return { settings, migration };
+    return { settings: rendererSettings, migration };
   });
   ipcMain.handle('messages:sync', async (_event, accountId, folder) => {
     const account = await getAccountWithPassword(accountId);

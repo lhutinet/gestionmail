@@ -91,6 +91,7 @@ contextBridge.exposeInMainWorld('gestionMail', {
     return () => ipcRenderer.removeListener('settings:changed', listener);
   },
   chooseDataDirectory: () => ipcRenderer.invoke('settings:choose-directory'),
+  chooseAppearanceBackground: () => ipcRenderer.invoke('settings:choose-background'),
   saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
   syncMessages: (accountId, folder) => ipcRenderer.invoke('messages:sync', accountId, folder),
   sendMessage: (accountId, message) => ipcRenderer.invoke('messages:send', accountId, message)
