@@ -46,7 +46,8 @@ La version actuelle permet également :
 - de classer automatiquement les nouveaux messages avec des règles par expéditeur, destinataire, objet ou contenu ;
 - de gérer des contacts et des groupes, avec import/export CSV ou vCard et fusion des doublons ;
 - de rédiger en HTML avec modèles, signature par compte, images intégrées et vérification orthographique ;
-- de conserver une liste TODO locale depuis le bouton discret en bas à gauche ;
+- de conserver une liste TODO locale depuis le bouton discret en bas à gauche et d’y voir les idées partagées à traiter ;
+- de proposer anonymement des idées à une API PostgreSQL auto-hébergée et de retrouver localement ses propres propositions jusqu’à leur suppression ; la connexion administrateur, placée à la fin des paramètres, permet de consulter, terminer ou supprimer l’ensemble des idées ;
 - de rouvrir automatiquement le dernier compte et le dernier dossier consultés ;
 - de redimensionner les colonnes principales.
 - de choisir la taille générale du texte et la couleur principale de l’interface depuis les paramètres ;

@@ -54,7 +54,7 @@ body.local-sidebar-collapsed .app-shell { grid-template-columns: 44px 0 var(--ac
 body.local-sidebar-collapsed .local-sidebar { padding: 18px 5px; overflow: hidden; }
 body.local-sidebar-collapsed .local-sidebar-header { justify-content: center; width: 100%; }
 body.local-sidebar-collapsed .local-sidebar-title,
-body.local-sidebar-collapsed .local-sidebar > :not(.local-sidebar-header):not(.todo-button):not(.contacts-button):not(#settings-button) { display: none !important; }
+body.local-sidebar-collapsed .local-sidebar > :not(.local-sidebar-header):not(.todo-button):not(.ideas-button):not(.contacts-button):not(#settings-button) { display: none !important; }
 body.local-sidebar-collapsed .local-sidebar-toggle { width: 32px; height: 32px; }
 body.local-sidebar-collapsed .local-sidebar .sidebar-labeled-action { display: flex; width: 34px; min-height: 36px; align-self: center; justify-content: center; padding: 7px 0; }
 body.local-sidebar-collapsed .sidebar-action-label,
@@ -73,6 +73,7 @@ body.local-sidebar-collapsed .local-sidebar + .column-resizer { width: 0; min-wi
 .local-sidebar .add-account { margin-top: 10px; }
 .settings-button { margin-top: 8px; padding: 11px 10px; border: 1px solid #30445e; border-radius: 9px; color: #c9d5e6; background: #16273d; text-align: left; }
 .todo-button { display: flex; justify-content: space-between; align-items: center; margin-top: auto; }
+.todo-button[hidden] + .ideas-button { margin-top: auto; }
 .contacts-button { margin-top: 8px; }
 .todo-count { display: grid; min-width: 21px; height: 21px; place-items: center; padding: 0 5px; border-radius: 999px; color: var(--accent-contrast); background: var(--accent-color); font-size: 11px; font-weight: 700; }
 .settings-button:hover { color: white; border-color: var(--accent-color); }
@@ -296,12 +297,27 @@ small { color: #778395; font-weight: 400; }
 .todo-form { display: grid; grid-template-columns: minmax(260px, 1fr) 150px auto; gap: 8px; }
 .todo-filters { display: flex; gap: 7px; margin: 14px 0 10px; }
 .todo-filters .active { border-color: var(--accent-strong); color: var(--accent-ink); background: var(--accent-soft); }
+.ideas-admin-button.authenticated { border-color: #79b897; color: #19653c; background: #eefaf3; }
+.ideas-admin-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .todo-list { display: grid; max-height: 430px; overflow-y: auto; border: 1px solid #dce2e9; border-radius: 9px; }
 .todo-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) 32px; align-items: center; gap: 9px; padding: 10px 12px; border-bottom: 1px solid #e5eaf0; }
 .todo-row:last-child { border-bottom: 0; }
 .todo-row.done .todo-title { color: #778395; text-decoration: line-through; }
 .todo-row input { width: auto; }
+.idea-form { display: grid; grid-template-columns: minmax(240px, 1fr) 150px auto; gap: 8px; margin-bottom: 18px; }
+.idea-form textarea { grid-column: 1 / -1; resize: vertical; }
+.idea-form button { grid-column: 3; }
+.idea-website { position: absolute !important; width: 1px !important; height: 1px !important; overflow: hidden; clip-path: inset(50%); opacity: 0; pointer-events: none; }
+.idea-list { max-height: min(52vh, 520px); overflow: auto; border: 1px solid #e5eaf0; border-radius: var(--ui-radius); }
+.idea-row { padding: 12px 14px; border-bottom: 1px solid #e5eaf0; }
+.idea-row:last-child { border-bottom: 0; }
+.idea-row.completed .idea-title { text-decoration: line-through; color: #778395; }
+.idea-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.idea-title { font-weight: 700; }
+.idea-meta { color: #6d7888; font-size: 12px; }
+.idea-description { margin: 7px 0 0; white-space: pre-wrap; }
 .todo-title { display: block; color: #263243; font-weight: 600; }
+.todo-description { display: block; margin-top: 4px; color: #4f5e70; font-size: 12px; line-height: 1.4; white-space: pre-wrap; }
 .todo-meta { display: block; margin-top: 3px; color: #778395; font-size: 11px; }
 .todo-delete { border: 0; color: #a61b13; background: transparent; font-size: 18px; }
 .drafts-dialog { width: min(620px, calc(100vw - 48px)); }
@@ -515,7 +531,7 @@ body, .content, .mail-view { color: var(--skin-text); background: var(--skin-can
 dialog { color: var(--skin-text); background: var(--skin-surface); }
 dialog::backdrop { background: #080d14a6; }
 dialog label, dialog legend, .dialog-heading h2, .todo-title, .draft-main, .rule-row button.rule-main, .contact-row, .contact-group-button { color: var(--skin-text); }
-.dialog-heading p, dialog small, .todo-meta, .draft-main span, .contact-row span, .contact-empty { color: var(--skin-text-muted); }
+.dialog-heading p, dialog small, .todo-description, .todo-meta, .draft-main span, .contact-row span, .contact-empty { color: var(--skin-text-muted); }
 dialog input, dialog select, dialog textarea, .secondary, .dialog-actions button, .compose-toolbar button, .compose-toolbar select, .compose-toolbar input, .recipient-token-field, .recipient-editor { color: var(--skin-text); border-color: var(--skin-border); background: var(--skin-surface); }
 fieldset, .todo-list, .draft-list, .rule-list, .contacts-layout, .contact-select-row, .contact-row, .recipient-picker-item { border-color: var(--skin-border); }
 .compose-toolbar, .contact-navigation, .contact-list { background: var(--skin-surface-soft); }

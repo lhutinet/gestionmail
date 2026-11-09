@@ -73,11 +73,25 @@ const settingsDialog = document.querySelector('#settings-dialog');
 const settingsForm = document.querySelector('#settings-form');
 const settingsError = document.querySelector('#settings-error');
 const saveSettingsButton = document.querySelector('#save-settings');
+const todoButton = document.querySelector('#todo-button');
 const todoDialog = document.querySelector('#todo-dialog');
 const todoForm = document.querySelector('#todo-form');
 const todoList = document.querySelector('#todo-list');
 const todoError = document.querySelector('#todo-error');
 const todoCount = document.querySelector('#todo-count');
+const ideasDialog = document.querySelector('#ideas-dialog');
+const ideaForm = document.querySelector('#idea-form');
+const ideaList = document.querySelector('#idea-list');
+const ideaError = document.querySelector('#idea-error');
+const ideasAdminDialog = document.querySelector('#ideas-admin-dialog');
+const ideasAdminForm = document.querySelector('#ideas-admin-form');
+const ideasAdminTitle = document.querySelector('#ideas-admin-title');
+const ideasAdminHelp = document.querySelector('#ideas-admin-help');
+const ideasAdminConfirmField = document.querySelector('#ideas-admin-confirm-field');
+const ideasAdminError = document.querySelector('#ideas-admin-error');
+const ideasAdminButton = document.querySelector('#ideas-admin-button');
+const ideasAdminPasswordButton = document.querySelector('#ideas-admin-password-button');
+const submitIdeasAdmin = document.querySelector('#submit-ideas-admin');
 const advancedSearchDialog = document.querySelector('#advanced-search-dialog');
 const advancedSearchForm = document.querySelector('#advanced-search-form');
 const advancedSearchError = document.querySelector('#advanced-search-error');
@@ -141,6 +155,9 @@ let folderCopyInProgress = false;
 let contacts = [];
 let contactGroups = [];
 let todos = [];
+let ideas = [];
+let canAdministerIdeas = false;
+let canConfigureIdeasAdminPassword = false;
 let todoFilter = 'open';
 let mailRules = [];
 let ruleServerFolders = [];
@@ -150,6 +167,32 @@ let draftSaveTimer = null;
 let suspendDraftAutosave = false;
 const selectedContactIds = new Set();
 let recipientTarget = 'to';
+const ownedIdeasStorageKey = 'gestionmail.ideas.owned.v1';
+
+function readOwnedIdeas() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ownedIdeasStorageKey) || '[]');
+    return (Array.isArray(parsed) ? parsed : [])
+      .filter((item) => /^[0-9a-f-]{36}$/i.test(String(item?.id || '')) && /^[0-9a-f]{64}$/i.test(String(item?.viewToken || '')))
+      .slice(0, 50);
+  } catch {
+    return [];
+  }
+}
+
+function saveOwnedIdeas(owned) {
+  localStorage.setItem(ownedIdeasStorageKey, JSON.stringify(owned.slice(0, 50)));
+}
+
+function rememberOwnedIdea(id, viewToken) {
+  const current = readOwnedIdeas().filter((item) => item.id !== id);
+  saveOwnedIdeas([{ id, viewToken }, ...current]);
+}
+
+function pruneOwnedIdeas(visibleIdeas) {
+  const visibleIds = new Set(visibleIdeas.map((idea) => idea.id));
+  saveOwnedIdeas(readOwnedIdeas().filter((item) => visibleIds.has(item.id)));
+}
 let pendingGroupContactIds = [];
 let contactGroupCreatedMessage = '';
 let pendingGroupId = null;
@@ -456,11 +499,46 @@ function folderCacheStorageKey(accountId) {
 }
 
 function updateTodoCount() {
-  todoCount.textContent = String(todos.filter((todo) => !todo.done).length);
+  const openLocalTodos = todos.filter((todo) => !todo.done).length;
+  const openIdeas = ideas.filter((idea) => idea.status !== 'completed').length;
+  todoCount.textContent = String(openLocalTodos + openIdeas);
+}
+
+function applyIdeasAdminState(state) {
+  canAdministerIdeas = state?.authenticated === true;
+  canConfigureIdeasAdminPassword = state?.canConfigurePassword === true;
+  todoButton.hidden = !canAdministerIdeas;
+  if (!canAdministerIdeas && todoDialog.open) todoDialog.close();
+  ideasAdminButton.classList.toggle('authenticated', canAdministerIdeas);
+  ideasAdminButton.textContent = canAdministerIdeas ? 'Déconnexion administrateur' : 'Connexion administrateur';
+  ideasAdminPasswordButton.hidden = !canConfigureIdeasAdminPassword;
+  if (todoDialog.open) renderTodos();
+}
+
+function openIdeasAdminDialog(configurationMode) {
+  ideasAdminForm.reset();
+  ideasAdminError.textContent = '';
+  ideasAdminConfirmField.hidden = !configurationMode;
+  ideasAdminForm.elements.confirmation.required = configurationMode;
+  ideasAdminForm.elements.password.autocomplete = configurationMode ? 'new-password' : 'current-password';
+  ideasAdminTitle.textContent = configurationMode ? 'Mot de passe administrateur' : 'Connexion administrateur';
+  ideasAdminHelp.textContent = configurationMode
+    ? 'Définissez le mot de passe qui permettra la connexion depuis vos autres ordinateurs.'
+    : 'La session reste active uniquement jusqu’à la fermeture de Monmail.';
+  submitIdeasAdmin.textContent = configurationMode ? 'Enregistrer' : 'Se connecter';
+  ideasAdminDialog.dataset.mode = configurationMode ? 'configure' : 'login';
+  ideasAdminDialog.showModal();
+  ideasAdminForm.elements.password.focus();
 }
 
 function renderTodos() {
-  const visible = todos.filter((todo) => todoFilter === 'all' || (todoFilter === 'done' ? todo.done : !todo.done));
+  const sharedIdeas = ideas.map((idea) => ({
+    ...idea,
+    done: idea.status === 'completed',
+    remoteIdea: true
+  }));
+  const visible = [...sharedIdeas, ...todos]
+    .filter((todo) => todoFilter === 'all' || (todoFilter === 'done' ? todo.done : !todo.done));
   todoList.replaceChildren();
   if (!visible.length) {
     const empty = document.createElement('div');
@@ -474,8 +552,18 @@ function renderTodos() {
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
     checkbox.checked = todo.done;
+    checkbox.disabled = Boolean(todo.remoteIdea && !canAdministerIdeas);
+    if (checkbox.disabled) checkbox.title = 'Seul le poste administrateur peut traiter cette idée.';
     checkbox.addEventListener('change', async () => {
       try {
+        if (todo.remoteIdea) {
+          const saved = await window.gestionMail.updateIdea(todo.id, checkbox.checked ? 'completed' : 'published');
+          ideas = ideas.map((idea) => idea.id === saved.id ? saved : idea);
+          updateTodoCount();
+          renderTodos();
+          if (ideasDialog.open) renderIdeas();
+          return;
+        }
         const saved = await window.gestionMail.saveTodo(selectedAccountId, { ...todo, done: checkbox.checked });
         todos = todos.map((item) => item.id === saved.id ? saved : item);
         updateTodoCount();
@@ -490,15 +578,31 @@ function renderTodos() {
     title.textContent = todo.title;
     const meta = document.createElement('span');
     meta.className = 'todo-meta';
-    meta.textContent = todo.category;
-    content.append(title, meta);
+    meta.textContent = todo.remoteIdea ? (todo.category === 'Général' ? '' : todo.category) : todo.category;
+    content.append(title);
+    if (todo.remoteIdea && todo.description) {
+      const description = document.createElement('span');
+      description.className = 'todo-description';
+      description.textContent = todo.description;
+      content.append(description);
+    }
+    if (meta.textContent) content.append(meta);
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'todo-delete';
+    remove.hidden = Boolean(todo.remoteIdea && !canAdministerIdeas);
     remove.textContent = '×';
     remove.title = 'Supprimer la tâche';
     remove.addEventListener('click', async () => {
       try {
+        if (todo.remoteIdea) {
+          await window.gestionMail.deleteIdea(todo.id);
+          ideas = ideas.filter((idea) => idea.id !== todo.id);
+          updateTodoCount();
+          renderTodos();
+          if (ideasDialog.open) renderIdeas();
+          return;
+        }
         await window.gestionMail.deleteTodo(selectedAccountId, todo.id);
         todos = todos.filter((item) => item.id !== todo.id);
         updateTodoCount();
@@ -513,9 +617,63 @@ function renderTodos() {
 }
 
 async function loadTodos() {
-  todos = await window.gestionMail.listTodos(selectedAccountId);
+  const [localResult, ideasResult, adminResult] = await Promise.allSettled([
+    window.gestionMail.listTodos(selectedAccountId),
+    window.gestionMail.listIdeas(readOwnedIdeas()),
+    window.gestionMail.ideasAdminState()
+  ]);
+  if (localResult.status === 'rejected') throw localResult.reason;
+  todos = localResult.value;
+  ideas = ideasResult.status === 'fulfilled' ? ideasResult.value : [];
+  applyIdeasAdminState(adminResult.status === 'fulfilled' ? adminResult.value : {});
+  if (ideasResult.status === 'rejected' && todoDialog.open) {
+    todoError.textContent = `Idées OVH indisponibles : ${readableError(ideasResult.reason)}`;
+  }
   updateTodoCount();
   if (todoDialog.open) renderTodos();
+}
+
+function renderIdeas() {
+  ideaList.replaceChildren();
+  if (!ideas.length) {
+    const empty = document.createElement('div');
+    empty.className = 'contact-empty';
+    empty.textContent = 'Aucune idée publiée pour le moment.';
+    ideaList.append(empty);
+    return;
+  }
+  for (const idea of ideas) {
+    const row = document.createElement('article');
+    row.className = `idea-row${idea.status === 'completed' ? ' completed' : ''}`;
+    const heading = document.createElement('div');
+    heading.className = 'idea-heading';
+    const title = document.createElement('span');
+    title.className = 'idea-title';
+    title.textContent = idea.title;
+    const meta = document.createElement('span');
+    meta.className = 'idea-meta';
+    const created = idea.createdAt ? new Date(idea.createdAt).toLocaleDateString('fr-FR') : '';
+    meta.textContent = [idea.category, idea.status === 'completed' ? 'Réalisée' : '', created].filter(Boolean).join(' · ');
+    heading.append(title, meta);
+    row.append(heading);
+    if (idea.description) {
+      const description = document.createElement('p');
+      description.className = 'idea-description';
+      description.textContent = idea.description;
+      row.append(description);
+    }
+    ideaList.append(row);
+  }
+}
+
+async function loadIdeas() {
+  const adminState = await window.gestionMail.ideasAdminState();
+  applyIdeasAdminState(adminState);
+  ideas = await window.gestionMail.listIdeas(readOwnedIdeas());
+  if (!adminState.authenticated) pruneOwnedIdeas(ideas);
+  updateTodoCount();
+  if (todoDialog.open) renderTodos();
+  renderIdeas();
 }
 
 async function loadDrafts() {
@@ -2788,10 +2946,12 @@ function configureAutoSync() {
 
 async function openSettingsDialog() {
   try {
-    const [settings, appVersion] = await Promise.all([
+    const [settings, appVersion, adminState] = await Promise.all([
       window.gestionMail.getSettings(),
-      window.gestionMail.getAppVersion()
+      window.gestionMail.getAppVersion(),
+      window.gestionMail.ideasAdminState()
     ]);
+    applyIdeasAdminState(adminState);
     currentSettings = settings;
     document.querySelector('#app-version').textContent = `Monmail — version ${appVersion}`;
     renderAccounts();
@@ -3532,7 +3692,7 @@ ruleForm.addEventListener('submit', async (event) => {
     ruleError.textContent = readableError(error);
   }
 });
-document.querySelector('#todo-button').addEventListener('click', async () => {
+todoButton.addEventListener('click', async () => {
   try {
     await loadTodos();
     todoError.textContent = '';
@@ -3543,6 +3703,72 @@ document.querySelector('#todo-button').addEventListener('click', async () => {
   }
 });
 document.querySelector('#close-todo').addEventListener('click', () => todoDialog.close());
+document.querySelector('#ideas-button').addEventListener('click', async () => {
+  ideaError.textContent = '';
+  ideasDialog.showModal();
+  try {
+    await loadIdeas();
+  } catch (error) {
+    ideaError.textContent = readableError(error);
+  }
+});
+document.querySelector('#close-ideas').addEventListener('click', () => ideasDialog.close());
+ideasAdminButton.addEventListener('click', async () => {
+  if (canAdministerIdeas) {
+    try {
+      applyIdeasAdminState(await window.gestionMail.logoutIdeasAdmin());
+      settingsError.textContent = 'Session administrateur fermée.';
+    } catch (error) {
+      settingsError.textContent = readableError(error);
+    }
+    return;
+  }
+  openIdeasAdminDialog(false);
+});
+ideasAdminPasswordButton.addEventListener('click', () => openIdeasAdminDialog(true));
+document.querySelector('#close-ideas-admin').addEventListener('click', () => ideasAdminDialog.close());
+document.querySelector('#cancel-ideas-admin').addEventListener('click', () => ideasAdminDialog.close());
+ideasAdminForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  ideasAdminError.textContent = '';
+  const password = ideasAdminForm.elements.password.value;
+  const configurationMode = ideasAdminDialog.dataset.mode === 'configure';
+  if (configurationMode && password !== ideasAdminForm.elements.confirmation.value) {
+    ideasAdminError.textContent = 'Les deux mots de passe ne correspondent pas.';
+    return;
+  }
+  try {
+    const state = configurationMode
+      ? await window.gestionMail.configureIdeasAdminPassword(password)
+      : await window.gestionMail.loginIdeasAdmin(password);
+    applyIdeasAdminState(state);
+    ideasAdminDialog.close();
+    settingsError.textContent = configurationMode
+      ? 'Mot de passe administrateur enregistré. Il peut maintenant être utilisé sur vos autres PC.'
+      : 'Connexion administrateur active.';
+  } catch (error) {
+    ideasAdminError.textContent = readableError(error);
+  }
+});
+ideaForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  ideaError.textContent = '';
+  try {
+    const result = await window.gestionMail.createIdea(Object.fromEntries(new FormData(ideaForm).entries()));
+    rememberOwnedIdea(result.idea.id, result.viewToken);
+    ideaForm.reset();
+    ideaForm.elements.category.value = 'Général';
+    if (result.pending) {
+      ideaError.textContent = 'Votre idée a été enregistrée et attend sa publication.';
+    } else {
+      await loadIdeas();
+      ideaError.textContent = 'Votre idée est publiée.';
+    }
+    ideaForm.elements.title.focus();
+  } catch (error) {
+    ideaError.textContent = readableError(error);
+  }
+});
 document.querySelectorAll('[data-todo-filter]').forEach((button) => {
   button.addEventListener('click', () => {
     todoFilter = button.dataset.todoFilter;

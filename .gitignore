@@ -5,5 +5,8 @@ release/
 out/
 /transfert/
 *.log
+.env
+.admin-token
+server/ideas-api/admin-data/
 .DS_Store
 

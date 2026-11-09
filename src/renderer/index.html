@@ -22,7 +22,8 @@
         </div>
         <nav id="local-folder-list" aria-label="Dossiers locaux"><div class="sidebar-empty">Aucun dossier local</div></nav>
         <button id="add-local-folder" class="add-account sidebar-icon-action" type="button" title="Nouveau dossier local" aria-label="Nouveau dossier local">📁＋</button>
-        <button id="todo-button" class="settings-button todo-button sidebar-labeled-action" type="button" title="TODO" aria-label="TODO"><span class="sidebar-action-icon" aria-hidden="true">✓</span><span class="sidebar-action-label">TODO</span><span id="todo-count" class="todo-count">0</span></button>
+        <button id="todo-button" class="settings-button todo-button sidebar-labeled-action" type="button" title="TODO" aria-label="TODO" hidden><span class="sidebar-action-icon" aria-hidden="true">✓</span><span class="sidebar-action-label">TODO</span><span id="todo-count" class="todo-count">0</span></button>
+        <button id="ideas-button" class="settings-button ideas-button sidebar-labeled-action" type="button" title="Boîte à idées" aria-label="Boîte à idées"><span class="sidebar-action-icon" aria-hidden="true">💡</span><span class="sidebar-action-label">Idées</span></button>
         <button id="contacts-button" class="settings-button contacts-button sidebar-labeled-action" type="button" title="Contacts" aria-label="Contacts"><span class="sidebar-action-icon" aria-hidden="true">♙</span><span class="sidebar-action-label">Contacts</span></button>
         <button id="settings-button" class="settings-button sidebar-labeled-action" type="button" title="Paramètres" aria-label="Paramètres"><span class="sidebar-action-icon" aria-hidden="true">⚙</span><span class="sidebar-action-label">Paramètres</span></button>
       </aside>
@@ -133,6 +134,35 @@
         </div>
         <p id="form-error" class="form-error" role="alert"></p>
         <div class="dialog-actions split-actions"><button id="delete-account" class="danger icon-action" type="button" title="Supprimer ce compte" aria-label="Supprimer ce compte" hidden>⌫</button><span></span><button id="cancel-dialog" class="icon-action" type="button" title="Annuler" aria-label="Annuler">×</button><button id="save-account" class="primary icon-action" type="submit" title="Tester et enregistrer" aria-label="Tester et enregistrer">✓</button></div>
+      </form>
+    </dialog>
+    <dialog id="ideas-dialog" class="todo-dialog">
+      <div class="todo-panel">
+        <div class="dialog-heading">
+          <div><h2>Boîte à idées</h2><p>Les propositions sont partagées anonymement par le serveur OVH.</p></div>
+          <button id="close-ideas" class="icon-button" type="button" aria-label="Fermer">×</button>
+        </div>
+        <form id="idea-form" class="idea-form">
+          <input name="title" maxlength="240" required placeholder="Titre de votre idée…">
+          <input name="category" maxlength="80" placeholder="Catégorie" value="Général">
+          <textarea name="description" maxlength="2000" rows="3" placeholder="Description facultative"></textarea>
+          <input class="idea-website" name="website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true">
+          <button class="primary" type="submit">Proposer l’idée</button>
+        </form>
+        <div id="idea-list" class="idea-list"></div>
+        <p id="idea-error" class="form-error" role="alert"></p>
+      </div>
+    </dialog>
+    <dialog id="ideas-admin-dialog" class="small-dialog">
+      <form id="ideas-admin-form" method="dialog">
+        <div class="dialog-heading">
+          <div><h2 id="ideas-admin-title">Connexion administrateur</h2><p id="ideas-admin-help">Connectez-vous pour terminer ou supprimer les idées partagées.</p></div>
+          <button id="close-ideas-admin" class="icon-button" type="button" aria-label="Fermer">×</button>
+        </div>
+        <label>Mot de passe administrateur<input name="password" type="password" minlength="12" maxlength="200" required autocomplete="current-password"></label>
+        <label id="ideas-admin-confirm-field" hidden>Confirmer le mot de passe<input name="confirmation" type="password" minlength="12" maxlength="200" autocomplete="new-password"></label>
+        <p id="ideas-admin-error" class="form-error" role="alert"></p>
+        <div class="dialog-actions"><button id="cancel-ideas-admin" class="icon-action" type="button" title="Annuler" aria-label="Annuler">×</button><button id="submit-ideas-admin" class="primary" type="submit">Se connecter</button></div>
       </form>
     </dialog>
     <dialog id="compose-dialog" class="compose-dialog">
@@ -305,7 +335,7 @@
     <dialog id="todo-dialog" class="todo-dialog">
       <div class="todo-panel">
         <div class="dialog-heading">
-          <div><h2>TODO Monmail</h2><p>La liste de travail de l’application, enregistrée localement.</p></div>
+          <div><h2>TODO Monmail</h2><p>Les tâches locales et les idées partagées à traiter.</p></div>
           <button id="close-todo" class="icon-button" type="button" aria-label="Fermer">×</button>
         </div>
         <form id="todo-form" class="todo-form">
@@ -462,6 +492,11 @@
             <label class="checkbox"><input name="autoUpdateEnabled" type="checkbox"> Rechercher automatiquement les mises à jour</label>
             <div class="backup-actions"><button id="check-updates" class="secondary icon-action" type="button" title="Rechercher les mises à jour" aria-label="Rechercher les mises à jour">↻</button><button id="download-update" class="secondary icon-action" type="button" title="Télécharger la mise à jour" aria-label="Télécharger la mise à jour" hidden>⇩</button><button id="install-update" class="secondary icon-action" type="button" title="Installer et redémarrer" aria-label="Installer et redémarrer" hidden>⟳</button></div>
             <small id="update-status">Source officielle : versions publiées du dépôt GitHub lhutinet/gestionmail.</small>
+          </fieldset>
+          <fieldset>
+            <legend>Administration de la boîte à idées</legend>
+            <div class="ideas-admin-actions"><button id="ideas-admin-button" class="secondary ideas-admin-button" type="button">Connexion administrateur</button><button id="ideas-admin-password-button" class="secondary" type="button" hidden>Mot de passe admin</button></div>
+            <small>La connexion permet de terminer, rouvrir ou supprimer les idées partagées. La session prend fin à la fermeture de Monmail.</small>
           </fieldset>
           <small id="app-version" class="app-version">Monmail</small>
           <small id="startup-performance" class="startup-performance">Mesure du démarrage indisponible.</small>

@@ -16,6 +16,17 @@ const {
 } = require('./message-store');
 const { getSettings, saveSettings } = require('./settings-store');
 const { deleteTodo, listTodos, saveTodo } = require('./todo-store');
+const {
+  canAdministerIdeas,
+  configureIdeasAdminPassword,
+  createIdea,
+  deleteIdea,
+  ideasAdminState,
+  listIdeas,
+  loginIdeasAdmin,
+  logoutIdeasAdmin,
+  updateIdea
+} = require('./idea-service');
 const { deleteTemplate, getComposerData, saveSignature, saveTemplate } = require('./composer-store');
 const { applyPendingRestore, createBackup, scheduleRestore } = require('./backup-store');
 const { authorizeOAuth } = require('./oauth-service');
@@ -912,6 +923,15 @@ app.whenReady().then(async () => {
   ipcMain.handle('todos:list', (_event, accountId) => listTodos(todoDirectoryForAccount(accountId)));
   ipcMain.handle('todos:save', (_event, accountId, todo) => saveTodo(todo, todoDirectoryForAccount(accountId)));
   ipcMain.handle('todos:delete', (_event, accountId, todoId) => deleteTodo(todoId, todoDirectoryForAccount(accountId)));
+  ipcMain.handle('ideas:list', (_event, owned) => listIdeas(owned));
+  ipcMain.handle('ideas:create', (_event, idea) => createIdea(idea));
+  ipcMain.handle('ideas:can-admin', () => canAdministerIdeas());
+  ipcMain.handle('ideas:admin-state', () => ideasAdminState());
+  ipcMain.handle('ideas:admin-login', (_event, password) => loginIdeasAdmin(password));
+  ipcMain.handle('ideas:admin-logout', () => logoutIdeasAdmin());
+  ipcMain.handle('ideas:admin-password', (_event, password) => configureIdeasAdminPassword(password));
+  ipcMain.handle('ideas:update', (_event, ideaId, status) => updateIdea(ideaId, status));
+  ipcMain.handle('ideas:delete', (_event, ideaId) => deleteIdea(ideaId));
   ipcMain.handle('mail-rules:list', () => listMailRules());
   ipcMain.handle('mail-rules:save', (_event, rule) => saveMailRule(rule));
   ipcMain.handle('mail-rules:delete', (_event, ruleId) => deleteMailRule(ruleId));
