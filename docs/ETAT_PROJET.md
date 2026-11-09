@@ -72,4 +72,4 @@ Aucune tâche ouverte n'est suivie dans `TODO.md`. Les points suivants sont des 
 - Suivi : `origin/master`.
 - Dépôt distant : `https://github.com/lhutinet/gestionmail.git`.
 - Commit observé avant cette mémoire : `c2a2d7c` du 7 novembre 2026.
-- L’API de la boîte à idées a été déployée sur OVH le 9 novembre 2026. La version applicative `1.0.3` regroupe son intégration et sa mémoire durable ; aucun tag de publication Windows n’a été créé.
+- L’API de la boîte à idées a été déployée sur OVH le 9 novembre 2026. La version applicative `1.0.3` regroupe son intégration et sa mémoire durable. Le tag `v1.0.3` a produit avec succès la Release Windows contenant `latest.yml`, l’installateur NSIS et la version portable.

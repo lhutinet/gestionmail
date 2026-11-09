@@ -138,4 +138,4 @@ Ce document conserve les choix confirmés par le code, la configuration ou l'his
 
 **Vérifications associées** — Lors d'un « fais un git », ne pas lancer de compilation, de smoke test, de diagnostic réel ou d'autres vérifications superflues sauf demande explicite. Effectuer seulement les contrôles Git nécessaires pour délimiter et enregistrer les changements.
 
-**Exception pour les tags** — Un tag `v*` déclenche une publication Windows. La création ou le push d'un tag exige donc une demande explicite mentionnant le tag ou la publication et n'est pas incluse dans la formule « fais un git ».
+**Exception pour les tags** — Un tag `v*` déclenche une publication Windows. La création ou le push d'un tag exige donc une demande explicite mentionnant le tag ou la publication et n'est pas incluse dans la formule « fais un git ». La formulation abrégée `v1.03` constitue une demande explicite de publication du tag SemVer correspondant `v1.0.3`, avec vérification de la Release.

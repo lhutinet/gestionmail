@@ -98,3 +98,4 @@ git diff --check
 - La formule « fais un git » constitue une demande explicite complète : vérifier le périmètre, créer un commit avec un message détaillé, puis pousser directement la branche active sans demander de confirmation supplémentaire.
 - Lorsque le propriétaire demande « fais un git », ne pas lancer de compilation, de smoke test, de diagnostic ou d'autres vérifications superflues sauf demande explicite ; se limiter aux contrôles Git nécessaires au commit et au push.
 - La création ou le push d'un tag reste une opération distincte, car un tag `v*` déclenche une publication Windows ; elle exige une demande explicite mentionnant le tag ou la publication.
+- Une demande formulée sous la forme `v1.03` constitue cette demande explicite : l’interpréter au format SemVer `v1.0.3`, créer et pousser ce tag, puis vérifier le résultat de la Release GitHub.
