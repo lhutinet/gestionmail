@@ -43,7 +43,7 @@ Aucune tâche ouverte n'est suivie dans `TODO.md`. Les points suivants sont des 
 - traiter les alertes de dépendances après analyse de compatibilité : `npm install` a signalé six vulnérabilités modérées le 9 novembre 2026 ;
 - configurer éventuellement une signature de code Windows si la distribution publique doit éviter les avertissements liés aux exécutables non signés ;
 - maintenir la documentation lors des prochaines fonctions, car la liste du README est longue et le TODO actuel est entièrement clôturé.
-- maintenir le déploiement `server/ideas-api` sur le VPS OVH et renseigner `ideasApiUrl` sur chaque poste Monmail à partir de `config/machine.example.json`.
+- maintenir le déploiement `server/ideas-api` sur le VPS OVH ; `https://idees.digitalh.fr` est intégré par défaut dans Monmail et `ideasApiUrl` ne sert plus que de remplacement local facultatif.
 
 ## Problèmes connus et points incertains
 

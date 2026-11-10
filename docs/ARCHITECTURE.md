@@ -73,7 +73,7 @@ Les fenêtres utilisent `contextIsolation: true`, `nodeIntegration: false` et `s
 
 `message-window.html`, `message-window.js` et `message-window.css` constituent une fenêtre de lecture séparée, utilisant la même frontière IPC.
 
-La boîte à idées utilise également cette frontière : `idea-service.js` lit `ideasApiUrl` dans `%ProgramData%\Monmail\machine.json`, impose HTTPS hors développement local et effectue les appels réseau depuis le processus principal. Le poste d’amorçage possède un jeton séparé dans `%ProgramData%\Monmail\ideas-admin-token` pour définir le mot de passe administrateur. Les autres postes obtiennent après connexion un jeton de session conservé uniquement en mémoire. Aucun accès PostgreSQL ni secret de base n'est exposé au renderer.
+La boîte à idées utilise également cette frontière : `idea-service.js` utilise par défaut l’API publique `https://idees.digitalh.fr`. Une propriété `ideasApiUrl` dans `%ProgramData%\Monmail\machine.json` peut remplacer cette adresse pour un environnement particulier. Le service impose HTTPS hors développement local et effectue les appels réseau depuis le processus principal. Le poste d’amorçage possède un jeton séparé dans `%ProgramData%\Monmail\ideas-admin-token` pour définir le mot de passe administrateur. Les autres postes obtiennent après connexion un jeton de session conservé uniquement en mémoire. Aucun accès PostgreSQL ni secret de base n'est exposé au renderer.
 
 ## Stockage local
 

@@ -15,9 +15,11 @@ Sur le VPS Digital H actuel, `deploy-ovh.sh` crée un rôle et une base `monmail
 
 `DEFAULT_IDEA_STATUS=published` affiche immédiatement les propositions. La valeur `pending` les conserve pour une modération directe dans PostgreSQL avant publication.
 
-## Configuration de Monmail
+## Configuration facultative de Monmail
 
-Créer `%ProgramData%\Monmail\machine.json` sur les postes concernés :
+Monmail utilise par défaut `https://idees.digitalh.fr`. Aucun réglage n’est nécessaire sur un nouveau PC pour accéder à la boîte à idées.
+
+Pour utiliser une autre API, créer `%ProgramData%\Monmail\machine.json` sur le poste concerné :
 
 ```json
 {

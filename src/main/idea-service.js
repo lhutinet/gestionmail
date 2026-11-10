@@ -3,6 +3,7 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 
 let adminSessionToken = '';
+const DEFAULT_IDEAS_API_URL = 'https://idees.digitalh.fr';
 
 function machineConfig() {
   const programData = process.env.ProgramData || process.env.PROGRAMDATA;
@@ -17,8 +18,7 @@ function machineConfig() {
 }
 
 function apiBaseUrl() {
-  const value = String(machineConfig().ideasApiUrl || '').trim().replace(/\/+$/, '');
-  if (!value) throw new Error('La boîte à idées OVH n’est pas encore configurée sur ce poste.');
+  const value = String(machineConfig().ideasApiUrl || DEFAULT_IDEAS_API_URL).trim().replace(/\/+$/, '');
   let url;
   try {
     url = new URL(value);

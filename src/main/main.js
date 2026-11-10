@@ -215,11 +215,20 @@ async function checkForUpdates(automatic = false) {
   autoUpdater.autoDownload = false;
   broadcastUpdate({ state: 'checking', message: automatic ? 'Recherche automatique d’une mise à jour…' : 'Recherche d’une mise à jour…' });
   try {
-    await autoUpdater.checkForUpdates();
+    const result = await autoUpdater.checkForUpdates();
+    if (result?.isUpdateAvailable) {
+      updateAvailable = true;
+      const status = { state: 'available', message: `Version ${result.updateInfo.version} disponible.`, version: result.updateInfo.version };
+      broadcastUpdate(status);
+      return status;
+    }
+    updateAvailable = false;
+    const status = { state: 'current', message: 'Monmail est à jour.' };
+    broadcastUpdate(status);
+    return status;
   } catch (error) {
     throw new Error(updateErrorMessage(error));
   }
-  return { state: 'checking' };
 }
 
 autoUpdater.on('update-available', (info) => { updateAvailable = true; broadcastUpdate({ state: 'available', message: `Version ${info.version} disponible.`, version: info.version }); });
