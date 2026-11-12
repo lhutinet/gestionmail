@@ -553,23 +553,34 @@ function storeSentMessage(account, message) {
     const content = fs.readFileSync(candidate.path);
     attachments.push({ filename: path.basename(candidate.path), content, contentType: 'application/octet-stream' });
   }
-  const messageId = storeMessage({
-    accountId: '__local__',
-    folder: `local:${folder.id}`,
-    remoteId: `sent-${randomUUID()}`,
-    subject: message.subject,
-    from: `${account.name} <${account.email}>`,
-    to: [message.to, message.cc].filter(Boolean).join(', '),
-    date: new Date(),
-    text: message.body,
-    html: message.htmlBody,
-    attachments,
-    isRead: true
-  });
-  const stored = db().prepare('SELECT * FROM messages WHERE id = ?').get(messageId);
-  const emlFilename = writeMessageFile(db(), stored, folder.diskName);
-  db().prepare('UPDATE messages SET eml_filename = ? WHERE id = ?').run(emlFilename, messageId);
-  return { id: messageId, folderId: folder.id, path: path.join(folderPathFromDiskName(folder.diskName), emlFilename) };
+  const database = db();
+  let emlPath = '';
+  database.exec('BEGIN');
+  try {
+    const messageId = storeMessage({
+      accountId: '__local__',
+      folder: `local:${folder.id}`,
+      remoteId: `sent-${randomUUID()}`,
+      subject: message.subject,
+      from: `${account.name} <${account.email}>`,
+      to: [message.to, message.cc].filter(Boolean).join(', '),
+      date: new Date(),
+      text: message.body,
+      html: message.htmlBody,
+      attachments,
+      isRead: true
+    });
+    const stored = database.prepare('SELECT * FROM messages WHERE id = ?').get(messageId);
+    const emlFilename = writeMessageFile(database, stored, folder.diskName);
+    emlPath = path.join(folderPathFromDiskName(folder.diskName), emlFilename);
+    database.prepare('UPDATE messages SET eml_filename = ? WHERE id = ?').run(emlFilename, messageId);
+    database.exec('COMMIT');
+    return { id: messageId, folderId: folder.id, path: emlPath };
+  } catch (error) {
+    database.exec('ROLLBACK');
+    if (emlPath && fs.existsSync(emlPath)) fs.rmSync(emlPath, { force: true });
+    throw error;
+  }
 }
 
 function getMessage(id) {

@@ -1338,8 +1338,13 @@ app.whenReady().then(async () => {
   ipcMain.handle('messages:send', async (_event, accountId, message) => {
     const account = await getAccountWithPassword(accountId);
     const result = await sendMessage(account, message);
-    const localCopy = storeSentMessage(account, message);
-    return { ...result, localCopy };
+    try {
+      const localCopy = storeSentMessage(account, message);
+      return { ...result, localCopy, copyError: '' };
+    } catch (error) {
+      console.error(`Message accepté par SMTP mais copie locale impossible : ${error.message}`);
+      return { ...result, localCopy: null, copyError: String(error.message || 'Erreur de stockage inconnue.') };
+    }
   });
   createWindow();
   await createTray();

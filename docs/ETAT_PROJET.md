@@ -15,6 +15,7 @@ Les éléments suivants sont présents dans l'implémentation et couverts totale
 - lecture texte/HTML avec assainissement, pièces jointes, réponses et transferts ;
 - état lu/non lu, copie, déplacement, archivage et suppression distante en IMAP ;
 - recherche globale et avancée, conversations et actions groupées ;
+- confirmation d'envoi fondée sur les destinataires acceptés par SMTP, signalement des refus et ouverture automatique de la copie locale `Envoyés` ;
 - contacts, groupes, import/export CSV ou vCard et fusion des doublons ;
 - brouillons automatiques, messages envoyés, signatures, modèles et rédaction HTML ;
 - règles de tri, favoris, dossiers locaux et copie d'arborescences serveur ;
@@ -27,7 +28,7 @@ Le 9 novembre 2026, `npm.cmd run check` et `npm.cmd run smoke` ont réussi avec 
 
 ## Travail terminé ou intégré
 
-- La version déclarée est `1.0.3`.
+- La version déclarée est `1.0.4`.
 - `TODO.md` et `todos.json` contiennent 11 tâches terminées et aucune tâche ouverte.
 - Les derniers commits intègrent notamment la publication 1.0.x, la TODO locale, la sécurité IMAP, la lecture HTML, les liens de courriels et les apparences personnalisables.
 - Le workflow de Release Windows est en place pour les tags `v*`.

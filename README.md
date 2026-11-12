@@ -42,7 +42,7 @@ La version actuelle permet également :
 - de copier récursivement un dossier serveur et toute son arborescence vers les dossiers locaux, avec progression et annulation ;
 - de déplacer les dossiers locaux comme des dossiers Windows, de compter leur contenu récursivement et de supprimer une arborescence complète ;
 - d'effectuer une recherche globale, de sélectionner plusieurs messages et de leur appliquer une action groupée ;
-- d'enregistrer automatiquement les brouillons et de conserver une copie locale des messages envoyés ;
+- d'enregistrer automatiquement les brouillons et de conserver une copie locale des messages envoyés ; après l'acceptation SMTP, Monmail ouvre directement le dossier local `Envoyés` et signale séparément tout destinataire refusé ou tout échec de copie ;
 - de classer automatiquement les nouveaux messages avec des règles par expéditeur, destinataire, objet ou contenu ;
 - de gérer des contacts et des groupes, avec import/export CSV ou vCard et fusion des doublons ;
 - de rédiger en HTML avec modèles, signature par compte, images intégrées et vérification orthographique ;

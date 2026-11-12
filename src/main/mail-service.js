@@ -342,7 +342,10 @@ async function sendMessage(account, message) {
       html: html || undefined,
       attachments
     });
-    return { messageId: result.messageId };
+    const accepted = (Array.isArray(result.accepted) ? result.accepted : []).map((address) => String(address));
+    const rejected = (Array.isArray(result.rejected) ? result.rejected : []).map((address) => String(address));
+    if (!accepted.length) throw new Error('Le serveur SMTP n’a accepté aucun destinataire.');
+    return { messageId: String(result.messageId || ''), accepted, rejected };
   } finally {
     transport.close();
   }

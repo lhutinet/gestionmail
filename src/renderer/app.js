@@ -4090,7 +4090,7 @@ composeForm.addEventListener('submit', async (event) => {
     composeForm.elements.htmlBody.value = bodyHtml;
     const message = Object.fromEntries(new FormData(composeForm).entries());
     message.attachments = composeAttachments;
-    await window.gestionMail.sendMessage(selectedAccountId, message);
+    const sendResult = await window.gestionMail.sendMessage(selectedAccountId, message);
     if (currentDraftId) await window.gestionMail.deleteDraft(currentDraftId);
     currentDraftId = null;
     composeForm.reset();
@@ -4101,7 +4101,19 @@ composeForm.addEventListener('submit', async (event) => {
     composeDraftStatus.textContent = '';
     await Promise.all([loadDrafts(), loadLocalFolders()]);
     composeDialog.close();
-    statusLine.textContent = 'Message envoyé et copie conservée dans « Envoyés ».';
+    const acceptedCount = Array.isArray(sendResult.accepted) ? sendResult.accepted.length : 0;
+    const rejected = Array.isArray(sendResult.rejected) ? sendResult.rejected : [];
+    if (sendResult.localCopy) {
+      const sentFolder = localFolders.find((folder) => folder.id === Number(sendResult.localCopy.folderId));
+      if (sentFolder) await selectLocalFolder(sentFolder);
+    }
+    if (sendResult.copyError) {
+      statusLine.textContent = `Message accepté par le serveur SMTP${acceptedCount ? ` pour ${acceptedCount} destinataire${acceptedCount > 1 ? 's' : ''}` : ''}, mais la copie locale a échoué : ${sendResult.copyError} Ne renvoyez pas le message sans vérifier sa réception.`;
+    } else if (rejected.length) {
+      statusLine.textContent = `Message accepté pour ${acceptedCount} destinataire${acceptedCount > 1 ? 's' : ''} et conservé dans « Envoyés ». Adresse${rejected.length > 1 ? 's' : ''} refusée${rejected.length > 1 ? 's' : ''} : ${rejected.join(', ')}.`;
+    } else {
+      statusLine.textContent = `Message accepté par le serveur SMTP${acceptedCount ? ` pour ${acceptedCount} destinataire${acceptedCount > 1 ? 's' : ''}` : ''} et conservé dans « Envoyés ».`;
+    }
   } catch (error) {
     composeError.textContent = readableError(error);
   } finally {

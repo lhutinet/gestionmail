@@ -50,6 +50,14 @@ Ce document conserve les choix confirmés par le code, la configuration ou l'his
 
 **Alternative non retenue** — Simuler des opérations serveur IMAP pour les comptes POP3.
 
+## Confirmation SMTP et copie des messages envoyés
+
+**Décision** — Confirmer un envoi uniquement lorsqu'au moins un destinataire a été accepté par le serveur SMTP, signaler les destinataires refusés et ouvrir la copie locale `Envoyés`. Si cette copie échoue après l'acceptation SMTP, l'interface doit indiquer que le message peut déjà être parti et déconseiller son renvoi immédiat.
+
+**Raison** — L'acceptation SMTP et l'archivage local sont deux opérations successives. Les confondre peut faire croire à un échec d'envoi et provoquer un doublon. La copie locale reste commune aux comptes IMAP et POP3.
+
+**Alternative non retenue** — Ajouter systématiquement une copie au dossier IMAP distant `Envoyés`, car certains fournisseurs enregistrent déjà les envois SMTP et créeraient alors des doublons.
+
 ## OAuth2 Google et Microsoft avec PKCE
 
 **Décision** — Utiliser le navigateur système, PKCE et un callback temporaire sur `127.0.0.1` pour Google et Microsoft.

@@ -101,6 +101,8 @@ La base SQLite contient notamment les messages, pièces jointes, dossiers locaux
 - l'analyse MIME avec `mailparser` ;
 - l'assainissement des contenus HTML avec `sanitize-html`.
 
+Après un envoi SMTP, le processus principal transmet au renderer les destinataires acceptés et refusés. La copie locale dans le dossier système `Envoyés` est enregistrée avec la base SQLite et le fichier EML traités comme une seule opération ; son échec est distingué de l'envoi déjà accepté afin d'éviter un renvoi accidentel. Le renderer ouvre cette copie après le succès. Monmail n'ajoute pas automatiquement une seconde copie au dossier IMAP distant, certains fournisseurs le faisant déjà eux-mêmes.
+
 Les opérations distantes de dossiers et de messages nécessitent IMAP. POP3 est limité par la nature du protocole et ne fournit pas ces capacités de classement serveur.
 
 `oauth-service.js` prend en charge Google et Microsoft avec OAuth2 PKCE. Le navigateur système est ouvert et le retour se fait sur un serveur HTTP temporaire lié à `127.0.0.1`. Les endpoints Google et Microsoft, les serveurs IMAP/POP3/SMTP configurés par l'utilisateur et GitHub Releases sont les services externes identifiés.
