@@ -18,6 +18,7 @@ function defaults() {
     backgroundDim: 20,
     minimizeToTray: false,
     groupConversations: true,
+    toolbarShortcuts: ['inbox', 'compose', 'sent'],
     autoUpdateEnabled: true,
     dataDirectory: app.getPath('userData')
   };
@@ -36,6 +37,7 @@ function saveSettings(patch) {
   const allowedIntervals = [0, 1, 5, 15, 30];
   const allowedFontSizes = [13, 14, 15, 16, 17];
   const allowedInterfaceSkins = ['classic', 'ocean', 'graphite', 'sand', 'neon', 'candy', 'forest'];
+  const allowedToolbarShortcuts = ['inbox', 'compose', 'sent', 'drafts', 'trash', 'sync', 'contacts'];
   const current = getSettings();
   const next = {
     ...current,
@@ -69,6 +71,10 @@ function saveSettings(patch) {
     groupConversations: patch.groupConversations === undefined
       ? current.groupConversations
       : Boolean(patch.groupConversations),
+    toolbarShortcuts: patch.toolbarShortcuts === undefined
+      ? current.toolbarShortcuts
+      : [...new Set(Array.isArray(patch.toolbarShortcuts) ? patch.toolbarShortcuts : [])]
+        .filter((shortcut) => allowedToolbarShortcuts.includes(String(shortcut))),
     autoUpdateEnabled: patch.autoUpdateEnabled === undefined
       ? current.autoUpdateEnabled
       : Boolean(patch.autoUpdateEnabled),

@@ -47,6 +47,7 @@
       <div class="column-resizer app-resizer" data-column-resize="accounts" role="separator" aria-label="Redimensionner les dossiers du compte" aria-orientation="vertical" tabindex="0" title="Glisser pour redimensionner — double-clic pour réinitialiser"></div>
 
       <main class="content">
+        <nav id="mail-toolbar-shortcuts" class="mail-toolbar-shortcuts" aria-label="Raccourcis de messagerie"></nav>
         <header class="toolbar">
           <div>
             <h1>Boîte de réception</h1>
@@ -167,7 +168,7 @@
     </dialog>
     <dialog id="compose-dialog" class="compose-dialog">
       <form id="compose-form" method="dialog">
-        <div class="dialog-heading">
+        <div class="dialog-heading compose-drag-handle" title="Glisser pour déplacer — double-cliquer pour réinitialiser">
           <div><h2>Nouveau message</h2><p id="compose-from"></p></div>
           <button id="close-compose" class="icon-button" type="button" aria-label="Fermer">×</button>
         </div>
@@ -251,9 +252,12 @@
             <button id="send-message" class="primary icon-action" type="submit" title="Envoyer" aria-label="Envoyer">➤</button>
           </div>
           <p id="compose-error" class="form-error" role="alert"></p>
-          <div class="compose-attachments">
+          <div id="compose-attachments-dropzone" class="compose-attachments" aria-label="Déposer des pièces jointes ici">
             <button id="choose-attachments" class="secondary icon-action" type="button" title="Ajouter des pièces jointes" aria-label="Ajouter des pièces jointes">📎</button>
-            <div id="selected-attachments" class="selected-attachments"></div>
+            <div class="compose-attachments-content">
+              <span class="compose-attachments-hint">Glissez-déposez vos fichiers ici ou utilisez le trombone.</span>
+              <div id="selected-attachments" class="selected-attachments"></div>
+            </div>
           </div>
         </div>
       </form>
@@ -301,9 +305,9 @@
         <div class="contacts-toolbar">
           <input id="contact-search" type="search" placeholder="Rechercher un contact">
           <button id="create-contact-group" class="secondary icon-action" type="button" title="Créer un groupe" aria-label="Créer un groupe" disabled>♟＋</button>
-          <button id="import-contacts" class="secondary icon-action" type="button" title="Importer des contacts" aria-label="Importer des contacts">⇩</button>
+          <button id="import-contacts" class="secondary icon-action" type="button" title="Importer des contacts et leurs groupes" aria-label="Importer des contacts et leurs groupes">⇩</button>
           <select id="contact-export-format" aria-label="Format d’export"><option value="csv">CSV</option><option value="vcf">vCard</option></select>
-          <button id="export-contacts" class="secondary icon-action" type="button" title="Exporter des contacts" aria-label="Exporter des contacts">⇧</button>
+          <button id="export-contacts" class="secondary icon-action" type="button" title="Exporter les contacts et leurs groupes" aria-label="Exporter les contacts et leurs groupes">⇧</button>
           <button id="merge-contacts" class="secondary icon-action" type="button" title="Fusionner les contacts ayant la même adresse e-mail" aria-label="Fusionner les doublons">⧉</button>
           <button id="new-contact" class="secondary icon-action" type="button" title="Nouveau contact" aria-label="Nouveau contact">♙＋</button>
         </div>
@@ -477,6 +481,19 @@
           <label class="checkbox"><input name="notificationsEnabled" type="checkbox"> Afficher les notifications Windows</label>
           <label class="checkbox"><input name="minimizeToTray" type="checkbox"> Réduire dans la zone de notification Windows</label>
           <label class="checkbox"><input name="groupConversations" type="checkbox"> Regrouper les messages par conversation</label>
+          <fieldset>
+            <legend>Boutons au-dessus des messages</legend>
+            <div class="shortcut-settings-grid">
+              <label class="checkbox"><input name="toolbarShortcuts" type="checkbox" value="inbox"> Boîte de réception</label>
+              <label class="checkbox"><input name="toolbarShortcuts" type="checkbox" value="compose"> Créer un mail</label>
+              <label class="checkbox"><input name="toolbarShortcuts" type="checkbox" value="sent"> Envoyés</label>
+              <label class="checkbox"><input name="toolbarShortcuts" type="checkbox" value="drafts"> Brouillons</label>
+              <label class="checkbox"><input name="toolbarShortcuts" type="checkbox" value="trash"> Corbeille</label>
+              <label class="checkbox"><input name="toolbarShortcuts" type="checkbox" value="sync"> Actualiser</label>
+              <label class="checkbox"><input name="toolbarShortcuts" type="checkbox" value="contacts"> Contacts</label>
+            </div>
+            <small>Cochez uniquement les boutons que vous souhaitez garder dans cette barre.</small>
+          </fieldset>
           <fieldset>
             <legend>Automatisation</legend>
             <button id="open-rules" class="secondary icon-action" type="button" title="Gérer le tri automatique" aria-label="Gérer le tri automatique">⚙</button>

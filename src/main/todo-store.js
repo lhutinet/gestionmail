@@ -67,10 +67,14 @@ function normaliseTodo(todo, existing = null) {
   if (!title) throw new Error('Le titre de la tâche est obligatoire.');
   if (title.length > 240) throw new Error('Le titre de la tâche est trop long.');
   const now = new Date().toISOString();
+  const description = String(todo?.description || '').trim().slice(0, 2000);
+  const sourceIdeaId = /^[0-9a-f-]{36}$/i.test(String(todo?.sourceIdeaId || '')) ? String(todo.sourceIdeaId) : '';
   return {
     id: existing?.id || String(todo.id || randomUUID()),
     title,
     category: String(todo.category || 'Général').trim().slice(0, 80) || 'Général',
+    description,
+    sourceIdeaId,
     done: Boolean(todo.done),
     createdAt: existing?.createdAt || now,
     updatedAt: now

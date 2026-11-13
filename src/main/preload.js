@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('gestionMail', {
   listAccounts: () => ipcRenderer.invoke('accounts:list'),
@@ -77,6 +77,8 @@ contextBridge.exposeInMainWorld('gestionMail', {
   deleteRemoteMessage: (messageId) => ipcRenderer.invoke('messages:delete-remote', messageId),
   deleteLocalMessage: (messageId) => ipcRenderer.invoke('messages:delete-local', messageId),
   chooseAttachments: () => ipcRenderer.invoke('attachments:choose'),
+  getDroppedFilePath: (file) => webUtils.getPathForFile(file),
+  inspectAttachmentPaths: (paths) => ipcRenderer.invoke('attachments:inspect-paths', paths),
   openAttachment: (messageId, attachmentIndex) => ipcRenderer.invoke('attachments:open', messageId, attachmentIndex),
   saveAttachment: (messageId, attachmentIndex) => ipcRenderer.invoke('attachments:save', messageId, attachmentIndex),
   showNotification: (title, body) => ipcRenderer.invoke('notifications:show', title, body),

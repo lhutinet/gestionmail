@@ -61,7 +61,7 @@ gestionmail/
 - enregistre les handlers IPC ;
 - applique une restauration différée avant de créer l'interface ;
 - déclenche l'indexation différée des fichiers EML locaux ;
-- gère la vérification, le téléchargement et l'installation explicite des mises à jour GitHub.
+- gère la vérification et le téléchargement des mises à jour GitHub, puis lance l'installation NSIS silencieuse avec redémarrage automatique.
 
 Les fenêtres utilisent `contextIsolation: true`, `nodeIntegration: false` et `sandbox: true`. Les liens externes ne sont ouverts que pour les protocoles HTTP, HTTPS et `mailto`.
 

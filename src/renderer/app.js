@@ -6,6 +6,7 @@ const accountSelector = document.querySelector('#account-selector');
 const folderList = document.querySelector('#folder-list');
 const favoriteList = document.querySelector('#favorite-list');
 const localFolderList = document.querySelector('#local-folder-list');
+const mailToolbarShortcuts = document.querySelector('#mail-toolbar-shortcuts');
 const localSidebar = document.querySelector('.local-sidebar');
 const localSidebarToggle = document.querySelector('#toggle-local-sidebar');
 const localSidebarAccount = document.querySelector('#local-sidebar-account');
@@ -24,6 +25,7 @@ const syncButton = document.querySelector('#sync-button');
 const composeButton = document.querySelector('#new-message');
 const trashFolderButton = document.querySelector('#trash-folder-button');
 const composeDialog = document.querySelector('#compose-dialog');
+const composeDragHandle = composeDialog.querySelector('.compose-drag-handle');
 const composeForm = document.querySelector('#compose-form');
 const composeError = document.querySelector('#compose-error');
 const sendButton = document.querySelector('#send-message');
@@ -36,6 +38,7 @@ const bulkCount = document.querySelector('#bulk-count');
 const bulkTarget = document.querySelector('#bulk-target');
 const autoSyncSelect = document.querySelector('#auto-sync');
 const selectedAttachments = document.querySelector('#selected-attachments');
+const composeAttachmentsDropzone = document.querySelector('#compose-attachments-dropzone');
 const composeBodyEditor = document.querySelector('#compose-body-editor');
 const composeToolbar = document.querySelector('#compose-toolbar');
 const composeFormat = document.querySelector('#compose-format');
@@ -210,6 +213,7 @@ let currentSettings = {
   backgroundDim: 20,
   minimizeToTray: false,
   groupConversations: true,
+  toolbarShortcuts: ['inbox', 'compose', 'sent'],
   autoUpdateEnabled: true,
   dataDirectory: ''
 };
@@ -218,6 +222,7 @@ let pendingBackgroundImageUrl = '';
 const lastAccountStorageKey = 'gestionmail.lastAccountId';
 const columnWidthsStorageKey = 'gestionmail.columnWidths';
 const localSidebarCollapsedStorageKey = 'gestionmail.localSidebarCollapsed';
+const composeGeometryStorageKey = 'gestionmail.composeGeometry';
 const defaultColumnWidths = { local: 190, accounts: 250, messages: 360 };
 let columnWidths = { ...defaultColumnWidths };
 
@@ -225,6 +230,99 @@ function applyInterfaceFontSize(value) {
   const size = [13, 14, 15, 16, 17].includes(Number(value)) ? Number(value) : 15;
   document.documentElement.style.setProperty('--ui-font-size', `${size - 2}px`);
 }
+
+function constrainComposeDialog() {
+  if (!composeDialog.open || !composeDialog.style.left) return;
+  const rect = composeDialog.getBoundingClientRect();
+  const width = Math.min(Math.round(rect.width), Math.max(320, window.innerWidth - 16));
+  const height = Math.min(Math.round(rect.height), Math.max(320, window.innerHeight - 16));
+  const left = Math.min(Math.max(8, Math.round(rect.left)), Math.max(8, window.innerWidth - width - 8));
+  const top = Math.min(Math.max(8, Math.round(rect.top)), Math.max(8, window.innerHeight - height - 8));
+  Object.assign(composeDialog.style, {
+    position: 'fixed', left: `${left}px`, top: `${top}px`, right: 'auto', bottom: 'auto',
+    width: `${width}px`, height: `${height}px`, margin: '0'
+  });
+}
+
+function saveComposeDialogGeometry() {
+  if (!composeDialog.open) return;
+  if (!composeDialog.style.left) {
+    const initialRect = composeDialog.getBoundingClientRect();
+    Object.assign(composeDialog.style, {
+      position: 'fixed', left: `${initialRect.left}px`, top: `${initialRect.top}px`, right: 'auto', bottom: 'auto',
+      width: `${initialRect.width}px`, height: `${initialRect.height}px`, margin: '0'
+    });
+  }
+  constrainComposeDialog();
+  const rect = composeDialog.getBoundingClientRect();
+  localStorage.setItem(composeGeometryStorageKey, JSON.stringify({
+    left: Math.round(rect.left), top: Math.round(rect.top),
+    width: Math.round(rect.width), height: Math.round(rect.height)
+  }));
+}
+
+function applyComposeDialogGeometry() {
+  try {
+    const geometry = JSON.parse(localStorage.getItem(composeGeometryStorageKey) || 'null');
+    if (!geometry || ![geometry.left, geometry.top, geometry.width, geometry.height].every(Number.isFinite)) return;
+    Object.assign(composeDialog.style, {
+      position: 'fixed', left: `${geometry.left}px`, top: `${geometry.top}px`, right: 'auto', bottom: 'auto',
+      width: `${geometry.width}px`, height: `${geometry.height}px`, margin: '0'
+    });
+    constrainComposeDialog();
+  } catch {
+    localStorage.removeItem(composeGeometryStorageKey);
+  }
+}
+
+function resetComposeDialogGeometry() {
+  localStorage.removeItem(composeGeometryStorageKey);
+  for (const property of ['position', 'left', 'top', 'right', 'bottom', 'width', 'height', 'margin']) {
+    composeDialog.style.removeProperty(property);
+  }
+}
+
+let composeDrag = null;
+composeDragHandle.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0 || event.target.closest('button, input, select, textarea')) return;
+  const rect = composeDialog.getBoundingClientRect();
+  Object.assign(composeDialog.style, {
+    position: 'fixed', left: `${rect.left}px`, top: `${rect.top}px`, right: 'auto', bottom: 'auto',
+    width: `${rect.width}px`, height: `${rect.height}px`, margin: '0'
+  });
+  composeDrag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
+  composeDragHandle.setPointerCapture(event.pointerId);
+  event.preventDefault();
+});
+composeDragHandle.addEventListener('pointermove', (event) => {
+  if (!composeDrag || composeDrag.pointerId !== event.pointerId) return;
+  const rect = composeDialog.getBoundingClientRect();
+  const left = Math.min(Math.max(8, composeDrag.left + event.clientX - composeDrag.x), Math.max(8, window.innerWidth - rect.width - 8));
+  const top = Math.min(Math.max(8, composeDrag.top + event.clientY - composeDrag.y), Math.max(8, window.innerHeight - rect.height - 8));
+  composeDialog.style.left = `${left}px`;
+  composeDialog.style.top = `${top}px`;
+});
+composeDragHandle.addEventListener('pointerup', (event) => {
+  if (!composeDrag || composeDrag.pointerId !== event.pointerId) return;
+  composeDrag = null;
+  if (composeDragHandle.hasPointerCapture(event.pointerId)) composeDragHandle.releasePointerCapture(event.pointerId);
+  saveComposeDialogGeometry();
+});
+composeDragHandle.addEventListener('pointercancel', () => { composeDrag = null; });
+composeDragHandle.addEventListener('dblclick', (event) => {
+  if (event.target.closest('button, input, select, textarea')) return;
+  resetComposeDialogGeometry();
+});
+
+let composeResizeFrame = null;
+new ResizeObserver(() => {
+  if (!composeDialog.open || composeDrag) return;
+  cancelAnimationFrame(composeResizeFrame);
+  composeResizeFrame = requestAnimationFrame(saveComposeDialogGeometry);
+}).observe(composeDialog);
+window.addEventListener('resize', () => {
+  if (composeDialog.open && composeDialog.style.left) saveComposeDialogGeometry();
+});
 
 function applyInterfaceSkin(value) {
   const skin = ['classic', 'ocean', 'graphite', 'sand', 'neon', 'candy', 'forest'].includes(String(value)) ? String(value) : 'classic';
@@ -500,7 +598,8 @@ function folderCacheStorageKey(accountId) {
 
 function updateTodoCount() {
   const openLocalTodos = todos.filter((todo) => !todo.done).length;
-  const openIdeas = ideas.filter((idea) => idea.status !== 'completed').length;
+  const copiedIdeaIds = new Set(todos.map((todo) => todo.sourceIdeaId).filter(Boolean));
+  const openIdeas = ideas.filter((idea) => idea.status !== 'completed' && !copiedIdeaIds.has(idea.id)).length;
   todoCount.textContent = String(openLocalTodos + openIdeas);
 }
 
@@ -531,8 +630,34 @@ function openIdeasAdminDialog(configurationMode) {
   ideasAdminForm.elements.password.focus();
 }
 
+function localTodoForIdea(ideaId) {
+  return todos.find((todo) => todo.sourceIdeaId === ideaId);
+}
+
+async function addIdeaToLocalTodo(idea, feedback = todoError) {
+  const existing = localTodoForIdea(idea.id);
+  if (existing) {
+    feedback.textContent = `L’idée « ${idea.title} » est déjà dans la TODO locale.`;
+    return existing;
+  }
+  const saved = await window.gestionMail.saveTodo(selectedAccountId, {
+    title: idea.title,
+    category: idea.category || 'Général',
+    description: idea.description || '',
+    sourceIdeaId: idea.id,
+    done: idea.status === 'completed'
+  });
+  todos = [saved, ...todos];
+  updateTodoCount();
+  if (todoDialog.open) renderTodos();
+  if (ideasDialog.open) renderIdeas();
+  feedback.textContent = `L’idée « ${idea.title} » a été ajoutée à la TODO locale.`;
+  return saved;
+}
+
 function renderTodos() {
-  const sharedIdeas = ideas.map((idea) => ({
+  const copiedIdeaIds = new Set(todos.map((todo) => todo.sourceIdeaId).filter(Boolean));
+  const sharedIdeas = ideas.filter((idea) => !copiedIdeaIds.has(idea.id)).map((idea) => ({
     ...idea,
     done: idea.status === 'completed',
     remoteIdea: true
@@ -564,6 +689,11 @@ function renderTodos() {
           if (ideasDialog.open) renderIdeas();
           return;
         }
+        if (todo.sourceIdeaId && canAdministerIdeas) {
+          const savedIdea = await window.gestionMail.updateIdea(todo.sourceIdeaId, checkbox.checked ? 'completed' : 'published');
+          ideas = ideas.map((idea) => idea.id === savedIdea.id ? savedIdea : idea);
+          if (ideasDialog.open) renderIdeas();
+        }
         const saved = await window.gestionMail.saveTodo(selectedAccountId, { ...todo, done: checkbox.checked });
         todos = todos.map((item) => item.id === saved.id ? saved : item);
         updateTodoCount();
@@ -580,13 +710,30 @@ function renderTodos() {
     meta.className = 'todo-meta';
     meta.textContent = todo.remoteIdea ? (todo.category === 'Général' ? '' : todo.category) : todo.category;
     content.append(title);
-    if (todo.remoteIdea && todo.description) {
+    if (todo.description) {
       const description = document.createElement('span');
       description.className = 'todo-description';
       description.textContent = todo.description;
       content.append(description);
     }
     if (meta.textContent) content.append(meta);
+    const actions = document.createElement('div');
+    actions.className = 'todo-actions';
+    if (todo.remoteIdea && canAdministerIdeas) {
+      const addLocal = document.createElement('button');
+      addLocal.type = 'button';
+      addLocal.className = 'todo-add-local';
+      addLocal.textContent = '＋ TODO locale';
+      addLocal.title = 'Ajouter cette idée à la TODO locale';
+      addLocal.addEventListener('click', async () => {
+        try {
+          await addIdeaToLocalTodo(todo);
+        } catch (error) {
+          todoError.textContent = readableError(error);
+        }
+      });
+      actions.append(addLocal);
+    }
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'todo-delete';
@@ -611,7 +758,8 @@ function renderTodos() {
         todoError.textContent = readableError(error);
       }
     });
-    row.append(checkbox, content, remove);
+    actions.append(remove);
+    row.append(checkbox, content, actions);
     todoList.append(row);
   }
 }
@@ -661,6 +809,25 @@ function renderIdeas() {
       description.className = 'idea-description';
       description.textContent = idea.description;
       row.append(description);
+    }
+    if (canAdministerIdeas) {
+      const actions = document.createElement('div');
+      actions.className = 'idea-actions';
+      const addLocal = document.createElement('button');
+      addLocal.type = 'button';
+      addLocal.className = 'secondary compact-action';
+      const copied = localTodoForIdea(idea.id);
+      addLocal.textContent = copied ? '✓ Dans la TODO locale' : '＋ Ajouter à la TODO locale';
+      addLocal.disabled = Boolean(copied);
+      addLocal.addEventListener('click', async () => {
+        try {
+          await addIdeaToLocalTodo(idea, ideaError);
+        } catch (error) {
+          ideaError.textContent = readableError(error);
+        }
+      });
+      actions.append(addLocal);
+      row.append(actions);
     }
     ideaList.append(row);
   }
@@ -978,6 +1145,23 @@ function renderComposeAttachments() {
     row.append(label, remove);
     selectedAttachments.append(row);
   });
+}
+
+function addComposeAttachments(attachments) {
+  const existing = new Set(composeAttachments.map((item) => String(item.path || '').toLocaleLowerCase('en')));
+  let added = 0;
+  for (const attachment of Array.isArray(attachments) ? attachments : []) {
+    const key = String(attachment?.path || '').toLocaleLowerCase('en');
+    if (!key || existing.has(key)) continue;
+    existing.add(key);
+    composeAttachments.push(attachment);
+    added += 1;
+  }
+  if (added) {
+    renderComposeAttachments();
+    queueDraftSave();
+  }
+  return added;
 }
 
 function extractEmail(value) {
@@ -1772,6 +1956,7 @@ async function openComposer(prefill = {}) {
   composeError.textContent = '';
   composeDraftStatus.textContent = currentDraftId ? 'Brouillon ouvert' : '';
   composeDialog.showModal();
+  applyComposeDialogGeometry();
   suspendDraftAutosave = false;
 }
 
@@ -2305,6 +2490,56 @@ function renderFolders() {
   trashFolderButton.disabled = !selectedAccountId || !trashFolder;
   trashFolderButton.title = trashFolder ? `Ouvrir ${trashFolder.name || 'la corbeille'}` : 'Aucun dossier Corbeille détecté';
   trashFolderButton.setAttribute('aria-label', trashFolderButton.title);
+  renderMailToolbarShortcuts();
+}
+
+function toolbarFolder(kind) {
+  if (kind === 'inbox') {
+    return specialFolder('\\Inbox') || folders.find((folder) => String(folder.path || '').toUpperCase() === 'INBOX');
+  }
+  if (kind === 'sent') {
+    return specialFolder('\\Sent') || folders.find((folder) => /envoy[ée]s|sent/i.test(folder.name || ''));
+  }
+  if (kind === 'trash') {
+    return specialFolder('\\Trash') || folders.find((folder) => /corbeille|trash/i.test(folder.name || ''));
+  }
+  return null;
+}
+
+function renderMailToolbarShortcuts() {
+  const configured = Array.isArray(currentSettings.toolbarShortcuts)
+    ? currentSettings.toolbarShortcuts
+    : ['inbox', 'compose', 'sent'];
+  const definitions = {
+    inbox: { icon: '▣', label: 'Boîte de réception', folder: 'inbox' },
+    compose: { icon: '✉', label: 'Créer un mail', action: () => openComposer() },
+    sent: { icon: '➤', label: 'Envoyés', folder: 'sent' },
+    drafts: { icon: '✎', label: 'Brouillons', action: () => document.querySelector('#drafts-button').click() },
+    trash: { icon: '⌫', label: 'Corbeille', folder: 'trash' },
+    sync: { icon: '↻', label: 'Actualiser', action: () => synchroniseCurrentFolder(false) },
+    contacts: { icon: '♙', label: 'Contacts', action: () => openContactsDialog() }
+  };
+  mailToolbarShortcuts.replaceChildren();
+  for (const key of configured) {
+    const definition = definitions[key];
+    if (!definition) continue;
+    const folder = definition.folder ? toolbarFolder(definition.folder) : null;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `mail-toolbar-shortcut${folder && !viewingLocal && folder.path === selectedFolder ? ' active' : ''}`;
+    button.textContent = `${definition.icon} ${folder?.name || definition.label}`;
+    button.title = definition.label;
+    button.disabled = !selectedAccountId || (Boolean(definition.folder) && !folder) || (key === 'sync' && (viewingLocal || syncInProgress));
+    button.addEventListener('click', async () => {
+      try {
+        if (folder) await selectFolder(folder.path);
+        else if (definition.action) await definition.action();
+      } catch (error) {
+        statusLine.textContent = `Action impossible : ${readableError(error)}`;
+      }
+    });
+    mailToolbarShortcuts.append(button);
+  }
 }
 
 function localFolderTree() {
@@ -2970,6 +3205,8 @@ async function openSettingsDialog() {
     settingsForm.elements.notificationsEnabled.checked = Boolean(currentSettings.notificationsEnabled);
     settingsForm.elements.minimizeToTray.checked = Boolean(currentSettings.minimizeToTray);
     settingsForm.elements.groupConversations.checked = currentSettings.groupConversations !== false;
+    const configuredShortcuts = new Set(Array.isArray(currentSettings.toolbarShortcuts) ? currentSettings.toolbarShortcuts : ['inbox', 'compose', 'sent']);
+    for (const input of settingsForm.querySelectorAll('input[name="toolbarShortcuts"]')) input.checked = configuredShortcuts.has(input.value);
     settingsForm.elements.autoUpdateEnabled.checked = currentSettings.autoUpdateEnabled !== false;
     const metrics = await window.gestionMail.getStartupPerformance();
     document.querySelector('#startup-performance').textContent = metrics.windowReadyMs === null
@@ -3559,13 +3796,41 @@ document.querySelector('#cancel-compose').addEventListener('click', async () => 
 document.querySelector('#choose-attachments').addEventListener('click', async () => {
   try {
     const chosen = await window.gestionMail.chooseAttachments();
-    for (const attachment of chosen) {
-      if (!composeAttachments.some((item) => item.path === attachment.path)) composeAttachments.push(attachment);
-    }
-    renderComposeAttachments();
-    queueDraftSave();
+    addComposeAttachments(chosen);
   } catch (error) {
     composeError.textContent = readableError(error);
+  }
+});
+
+let composeAttachmentDragDepth = 0;
+composeDialog.addEventListener('dragenter', (event) => {
+  if (!Array.from(event.dataTransfer?.types || []).includes('Files')) return;
+  event.preventDefault();
+  composeAttachmentDragDepth += 1;
+  composeAttachmentsDropzone.classList.add('drag-over');
+});
+composeDialog.addEventListener('dragover', (event) => {
+  if (!Array.from(event.dataTransfer?.types || []).includes('Files')) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'copy';
+});
+composeDialog.addEventListener('dragleave', () => {
+  composeAttachmentDragDepth = Math.max(0, composeAttachmentDragDepth - 1);
+  if (!composeAttachmentDragDepth) composeAttachmentsDropzone.classList.remove('drag-over');
+});
+composeDialog.addEventListener('drop', async (event) => {
+  event.preventDefault();
+  composeAttachmentDragDepth = 0;
+  composeAttachmentsDropzone.classList.remove('drag-over');
+  try {
+    const paths = [...(event.dataTransfer?.files || [])]
+      .map((file) => window.gestionMail.getDroppedFilePath(file))
+      .filter(Boolean);
+    const inspected = await window.gestionMail.inspectAttachmentPaths(paths);
+    const added = addComposeAttachments(inspected);
+    composeError.textContent = added ? '' : 'Aucun nouveau fichier à ajouter.';
+  } catch (error) {
+    composeError.textContent = `Ajout impossible : ${readableError(error)}`;
   }
 });
 
@@ -3801,7 +4066,7 @@ document.querySelector('#import-contacts').addEventListener('click', async () =>
     if (!result.imported) { contactError.textContent = ''; return; }
     await loadContacts();
     renderContacts(contactSearch.value);
-    contactError.textContent = `${result.count} contact(s) importé(s) ou actualisé(s).`;
+    contactError.textContent = `${result.count} contact(s) importé(s) ou actualisé(s)${result.groupCount ? ` — ${result.groupCount} groupe(s) restauré(s)` : ''}.`;
   } catch (error) {
     contactError.textContent = readableError(error);
   }
@@ -3811,7 +4076,7 @@ document.querySelector('#export-contacts').addEventListener('click', async () =>
   try {
     const format = document.querySelector('#contact-export-format').value;
     const result = await window.gestionMail.exportContacts(format);
-    contactError.textContent = result.exported ? `${result.count} contact(s) exporté(s).` : '';
+    contactError.textContent = result.exported ? `${result.count} contact(s) et ${result.groupCount || 0} groupe(s) exporté(s).` : '';
   } catch (error) {
     contactError.textContent = readableError(error);
   }
@@ -3996,6 +4261,7 @@ settingsForm.addEventListener('submit', async (event) => {
       notificationsEnabled: settingsForm.elements.notificationsEnabled.checked,
       minimizeToTray: settingsForm.elements.minimizeToTray.checked,
       groupConversations: settingsForm.elements.groupConversations.checked,
+      toolbarShortcuts: [...settingsForm.querySelectorAll('input[name="toolbarShortcuts"]:checked')].map((input) => input.value),
       autoUpdateEnabled: settingsForm.elements.autoUpdateEnabled.checked
     };
     const result = await window.gestionMail.saveSettings(values);
@@ -4003,6 +4269,7 @@ settingsForm.addEventListener('submit', async (event) => {
     applyInterfaceFontSize(currentSettings.fontSize);
     applyInterfaceAppearance(currentSettings);
     applyInterfaceColor(currentSettings.interfaceColor);
+    renderMailToolbarShortcuts();
     autoSyncSelect.value = String(currentSettings.autoSyncMinutes);
     configureAutoSync();
     await loadLocalFolders();

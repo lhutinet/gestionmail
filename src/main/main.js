@@ -45,6 +45,7 @@ const folderCopyJobs = new Map();
 let localScanPromise = null;
 let updateAvailable = false;
 let updateDownloaded = false;
+let updateInstallStarted = false;
 
 function settingsForRenderer(settings = getSettings()) {
   const filename = /^background\.(?:png|jpe?g|webp|gif)$/i.test(String(settings.backgroundImage || ''))
@@ -73,18 +74,36 @@ function attachmentDownloadPath(filename) {
   return path.join(app.getPath('downloads'), safeAttachmentFilename(filename));
 }
 
-function contactsToCsv(contacts) {
-  const rows = [['Nom', 'E-mail', 'Téléphone', 'Société', 'Notes']];
-  for (const contact of contacts) rows.push([contact.name, contact.email, contact.phone, contact.company, contact.notes]);
+function contactGroupsByContact(groups) {
+  const memberships = new Map();
+  for (const group of groups) {
+    for (const member of group.members || []) {
+      if (!memberships.has(member.id)) memberships.set(member.id, []);
+      memberships.get(member.id).push(group.name);
+    }
+  }
+  return memberships;
+}
+
+function contactsToCsv(contacts, groups = []) {
+  const memberships = contactGroupsByContact(groups);
+  const rows = [['Nom', 'E-mail', 'Téléphone', 'Société', 'Notes', 'Groupes']];
+  for (const contact of contacts) rows.push([
+    contact.name, contact.email, contact.phone, contact.company, contact.notes,
+    (memberships.get(contact.id) || []).join(' | ')
+  ]);
   return `\uFEFF${rows.map((row) => row.map(csvCell).join(';')).join('\r\n')}\r\n`;
 }
 
-function contactsToVcard(contacts) {
+function contactsToVcard(contacts, groups = []) {
   const clean = (value) => String(value || '').replaceAll('\\', '\\\\').replaceAll('\n', '\\n').replaceAll(';', '\\;').replaceAll(',', '\\,');
+  const memberships = contactGroupsByContact(groups);
   return contacts.map((contact) => [
     'BEGIN:VCARD', 'VERSION:3.0', `FN:${clean(contact.name)}`, `EMAIL:${clean(contact.email)}`,
     contact.phone ? `TEL:${clean(contact.phone)}` : '', contact.company ? `ORG:${clean(contact.company)}` : '',
-    contact.notes ? `NOTE:${clean(contact.notes)}` : '', 'END:VCARD'
+    contact.notes ? `NOTE:${clean(contact.notes)}` : '',
+    memberships.get(contact.id)?.length ? `CATEGORIES:${memberships.get(contact.id).map(clean).join(',')}` : '',
+    'END:VCARD'
   ].filter(Boolean).join('\r\n')).join('\r\n');
 }
 
@@ -103,6 +122,25 @@ function parseCsvLine(line, separator) {
   return values;
 }
 
+function parseCsvRecords(content) {
+  const records = [];
+  let start = 0;
+  let quoted = false;
+  for (let index = 0; index < content.length; index += 1) {
+    if (content[index] === '"') {
+      if (quoted && content[index + 1] === '"') index += 1;
+      else quoted = !quoted;
+    } else if (content[index] === '\n' && !quoted) {
+      const record = content.slice(start, index).replace(/\r$/, '');
+      if (record.trim()) records.push(record);
+      start = index + 1;
+    }
+  }
+  const last = content.slice(start).replace(/\r$/, '');
+  if (last.trim()) records.push(last);
+  return records;
+}
+
 function parseContactFile(filePath) {
   const content = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '');
   if (/\.vcf$/i.test(filePath) || /BEGIN:VCARD/i.test(content)) {
@@ -112,21 +150,33 @@ function parseContactFile(filePath) {
         const separator = line.indexOf(':');
         if (separator < 0) continue;
         const key = line.slice(0, separator).split(';')[0].toUpperCase();
-        fields[key] = line.slice(separator + 1).replace(/\\n/gi, '\n').replace(/\\([\\;,])/g, '$1');
+        const rawValue = line.slice(separator + 1);
+        const decode = (value) => value.replace(/\\n/gi, '\n').replace(/\\([\\;,])/g, '$1');
+        fields[key] = key === 'CATEGORIES'
+          ? rawValue.split(/(?<!\\),/).map(decode)
+          : decode(rawValue);
       }
-      return { name: fields.FN || fields.N || fields.EMAIL, email: fields.EMAIL, phone: fields.TEL || '', company: fields.ORG || '', notes: fields.NOTE || '' };
+      return {
+        name: fields.FN || fields.N || fields.EMAIL, email: fields.EMAIL, phone: fields.TEL || '',
+        company: fields.ORG || '', notes: fields.NOTE || '',
+        groups: (Array.isArray(fields.CATEGORIES) ? fields.CATEGORIES : []).map((name) => name.trim()).filter(Boolean)
+      };
     }).filter((contact) => contact.email);
   }
-  const lines = content.split(/\r?\n/).filter((line) => line.trim());
+  const lines = parseCsvRecords(content);
   if (!lines.length) return [];
   const separator = (lines[0].match(/;/g) || []).length >= (lines[0].match(/,/g) || []).length ? ';' : ',';
   const headers = parseCsvLine(lines.shift(), separator).map((value) => value.toLocaleLowerCase('fr'));
   const column = (...names) => headers.findIndex((header) => names.some((name) => header.includes(name)));
-  const indices = { name: column('nom', 'name'), email: column('mail'), phone: column('téléphone', 'telephone', 'phone'), company: column('société', 'societe', 'company', 'entreprise'), notes: column('note') };
+  const indices = { name: column('nom', 'name'), email: column('mail'), phone: column('téléphone', 'telephone', 'phone'), company: column('société', 'societe', 'company', 'entreprise'), notes: column('note'), groups: column('groupe', 'group') };
   return lines.map((line) => {
     const cells = parseCsvLine(line, separator);
     const get = (index) => index >= 0 ? cells[index] || '' : '';
-    return { name: get(indices.name) || get(indices.email), email: get(indices.email), phone: get(indices.phone), company: get(indices.company), notes: get(indices.notes) };
+    return {
+      name: get(indices.name) || get(indices.email), email: get(indices.email), phone: get(indices.phone),
+      company: get(indices.company), notes: get(indices.notes),
+      groups: get(indices.groups).split('|').map((name) => name.trim()).filter(Boolean)
+    };
   }).filter((contact) => contact.email);
 }
 
@@ -234,7 +284,24 @@ async function checkForUpdates(automatic = false) {
 autoUpdater.on('update-available', (info) => { updateAvailable = true; broadcastUpdate({ state: 'available', message: `Version ${info.version} disponible.`, version: info.version }); });
 autoUpdater.on('update-not-available', () => broadcastUpdate({ state: 'current', message: 'Monmail est à jour.' }));
 autoUpdater.on('download-progress', (progress) => broadcastUpdate({ state: 'downloading', message: `Téléchargement : ${Math.round(progress.percent)} %`, percent: progress.percent }));
-autoUpdater.on('update-downloaded', (info) => { updateDownloaded = true; broadcastUpdate({ state: 'downloaded', message: `Version ${info.version} prête à être installée.`, version: info.version }); });
+function installDownloadedUpdate() {
+  if (!updateDownloaded) throw new Error('Aucune mise à jour téléchargée.');
+  if (updateInstallStarted) return { installing: true };
+  updateInstallStarted = true;
+  isQuitting = true;
+  broadcastUpdate({ state: 'installing', message: 'Installation silencieuse de la mise à jour et redémarrage…' });
+  setTimeout(() => autoUpdater.quitAndInstall(true, true), 500);
+  return { installing: true };
+}
+
+autoUpdater.on('update-downloaded', (info) => {
+  updateDownloaded = true;
+  broadcastUpdate({ state: 'downloaded', message: `Version ${info.version} téléchargée — installation silencieuse…`, version: info.version });
+  setTimeout(() => {
+    try { installDownloadedUpdate(); }
+    catch (error) { broadcastUpdate({ state: 'error', message: updateErrorMessage(error) }); }
+  }, 400);
+});
 autoUpdater.on('error', (error) => broadcastUpdate({ state: 'error', message: updateErrorMessage(error) }));
 
 function crc32(buffer) {
@@ -632,6 +699,20 @@ app.whenReady().then(async () => {
       if (listContacts().some((contact) => contact.id === duplicateContact.id)) {
         throw new Error('Échec du contrôle de suppression du doublon fusionné.');
       }
+      const exportedContacts = listContacts();
+      const exportedGroups = listContactGroups();
+      const csvExportPath = path.join(app.getPath('userData'), 'contacts-test.csv');
+      const vcardExportPath = path.join(app.getPath('userData'), 'contacts-test.vcf');
+      fs.writeFileSync(csvExportPath, contactsToCsv(exportedContacts, exportedGroups), 'utf8');
+      fs.writeFileSync(vcardExportPath, contactsToVcard(exportedContacts, exportedGroups), 'utf8');
+      const csvImportedContact = parseContactFile(csvExportPath).find((contact) => contact.email === 'contact@example.test');
+      const vcardImportedContact = parseContactFile(vcardExportPath).find((contact) => contact.email === 'contact@example.test');
+      if (
+        !csvImportedContact?.groups.includes('Groupe modifié') ||
+        !vcardImportedContact?.groups.includes('Groupe modifié')
+      ) throw new Error('Échec du contrôle d’export des groupes de contacts.');
+      fs.rmSync(csvExportPath, { force: true });
+      fs.rmSync(vcardExportPath, { force: true });
       deleteContactGroup(editedGroup.id);
       deleteContact(smokeContact.id);
       deleteContact(secondContact.id);
@@ -767,9 +848,14 @@ app.whenReady().then(async () => {
       }
       removeLocalMessage(sentCopy.id);
       fs.rmSync(sentAttachmentPath, { force: true });
-      const smokeTodo = saveTodo({ title: 'TODO partagée', category: 'Test' }, smokeAccount.localDirectory);
+      const smokeTodo = saveTodo({
+        title: 'TODO partagée', category: 'Test', description: 'Description issue d’une idée',
+        sourceIdeaId: '11111111-1111-4111-8111-111111111111'
+      }, smokeAccount.localDirectory);
       if (
         Object.hasOwn(smokeTodo, 'priority') ||
+        smokeTodo.description !== 'Description issue d’une idée' ||
+        smokeTodo.sourceIdeaId !== '11111111-1111-4111-8111-111111111111' ||
         !listTodos(smokeAccount.localDirectory).some((todo) => todo.id === smokeTodo.id) ||
         !fs.existsSync(path.join(smokeAccount.localDirectory, 'todos.json')) ||
         !fs.existsSync(path.join(smokeAccount.localDirectory, 'TODO.md'))
@@ -809,7 +895,7 @@ app.whenReady().then(async () => {
       const smokeAppearanceDirectory = path.join(app.getPath('userData'), 'appearance');
       fs.mkdirSync(smokeAppearanceDirectory, { recursive: true });
       fs.writeFileSync(path.join(smokeAppearanceDirectory, 'background.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
-      saveSettings({ autoSyncMinutes: 5, notificationsEnabled: false, fontSize: 14, interfaceSkin: 'graphite', interfaceColor: '#d04f85', cornerRadius: 22, backgroundImage: 'background.png', backgroundDim: 35, minimizeToTray: true, groupConversations: false, autoUpdateEnabled: false });
+      saveSettings({ autoSyncMinutes: 5, notificationsEnabled: false, fontSize: 14, interfaceSkin: 'graphite', interfaceColor: '#d04f85', cornerRadius: 22, backgroundImage: 'background.png', backgroundDim: 35, minimizeToTray: true, groupConversations: false, toolbarShortcuts: ['compose', 'sent', 'contacts'], autoUpdateEnabled: false });
       const externalEmlPath = path.join(getLocalFolderPath(migrationFolder.id), 'message-externe.eml');
       fs.writeFileSync(
         externalEmlPath,
@@ -832,6 +918,7 @@ app.whenReady().then(async () => {
         getSettings().backgroundDim !== 35 ||
         getSettings().minimizeToTray !== true ||
         getSettings().groupConversations !== false ||
+        getSettings().toolbarShortcuts.join(',') !== 'compose,sent,contacts' ||
         getSettings().autoUpdateEnabled !== false
       ) {
         throw new Error('Échec du contrôle de migration des paramètres et du stockage.');
@@ -900,8 +987,9 @@ app.whenReady().then(async () => {
     });
     if (result.canceled || !result.filePath) return { exported: false };
     const contacts = listContacts();
-    fs.writeFileSync(result.filePath, useVcard ? contactsToVcard(contacts) : contactsToCsv(contacts), 'utf8');
-    return { exported: true, count: contacts.length, path: result.filePath };
+    const groups = listContactGroups();
+    fs.writeFileSync(result.filePath, useVcard ? contactsToVcard(contacts, groups) : contactsToCsv(contacts, groups), 'utf8');
+    return { exported: true, count: contacts.length, groupCount: groups.length, path: result.filePath };
   });
   ipcMain.handle('contacts:import', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
@@ -912,6 +1000,7 @@ app.whenReady().then(async () => {
     if (result.canceled || !result.filePaths[0]) return { imported: false, count: 0 };
     const imported = parseContactFile(result.filePaths[0]);
     const existing = new Map(listContacts().map((contact) => [contact.email.toLocaleLowerCase('fr'), contact]));
+    const groupMembers = new Map();
     let count = 0;
     for (const contact of imported) {
       const previous = existing.get(contact.email.toLocaleLowerCase('fr'));
@@ -924,9 +1013,23 @@ app.whenReady().then(async () => {
         notes: contact.notes || previous?.notes || ''
       });
       existing.set(saved.email.toLocaleLowerCase('fr'), saved);
+      for (const groupName of contact.groups || []) {
+        const key = groupName.toLocaleLowerCase('fr');
+        if (!groupMembers.has(key)) groupMembers.set(key, { name: groupName, ids: new Set() });
+        groupMembers.get(key).ids.add(saved.id);
+      }
       count += 1;
     }
-    return { imported: true, count };
+    const existingGroups = new Map(listContactGroups().map((group) => [group.name.toLocaleLowerCase('fr'), group]));
+    let groupCount = 0;
+    for (const [key, importedGroup] of groupMembers) {
+      const previous = existingGroups.get(key);
+      const contactIds = new Set([...(previous?.members || []).map((member) => member.id), ...importedGroup.ids]);
+      if (contactIds.size < 2) continue;
+      saveContactGroup(previous?.name || importedGroup.name, [...contactIds], previous?.id || null);
+      groupCount += 1;
+    }
+    return { imported: true, count, groupCount };
   });
   const todoDirectoryForAccount = (accountId) => listAccounts().find((account) => account.id === String(accountId || ''))?.localDirectory || '';
   ipcMain.handle('todos:list', (_event, accountId) => listTodos(todoDirectoryForAccount(accountId)));
@@ -960,10 +1063,7 @@ app.whenReady().then(async () => {
     return { downloading: true };
   });
   ipcMain.handle('updates:install', () => {
-    if (!updateDownloaded) throw new Error('Aucune mise à jour téléchargée.');
-    isQuitting = true;
-    autoUpdater.quitAndInstall(false, true);
-    return { installing: true };
+    return installDownloadedUpdate();
   });
   ipcMain.handle('folders:list', async (_event, accountId) => {
     const account = await getAccountWithPassword(accountId);
@@ -1165,6 +1265,24 @@ app.whenReady().then(async () => {
       return { path: filePath, name: path.basename(filePath), size: stats.size };
     });
   });
+  ipcMain.handle('attachments:inspect-paths', (_event, candidates) => {
+    const attachments = [];
+    const seen = new Set();
+    for (const candidate of Array.isArray(candidates) ? candidates.slice(0, 100) : []) {
+      try {
+        const filePath = path.resolve(String(candidate || ''));
+        const key = filePath.toLocaleLowerCase('en');
+        if (!candidate || seen.has(key)) continue;
+        const stats = fs.statSync(filePath);
+        if (!stats.isFile()) continue;
+        seen.add(key);
+        attachments.push({ path: filePath, name: path.basename(filePath), size: stats.size });
+      } catch {
+        // Un fichier retiré pendant le dépôt ou un dossier n'est pas ajouté.
+      }
+    }
+    return attachments;
+  });
   ipcMain.handle('composer:choose-inline-image', async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(owner, {
@@ -1296,6 +1414,7 @@ app.whenReady().then(async () => {
       backgroundDim: values.backgroundDim,
       minimizeToTray: values.minimizeToTray,
       groupConversations: values.groupConversations,
+      toolbarShortcuts: values.toolbarShortcuts,
       autoUpdateEnabled: values.autoUpdateEnabled,
       dataDirectory: migration.dataDirectory || current.dataDirectory
     });

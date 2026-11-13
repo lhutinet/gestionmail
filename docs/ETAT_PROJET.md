@@ -16,20 +16,21 @@ Les éléments suivants sont présents dans l'implémentation et couverts totale
 - état lu/non lu, copie, déplacement, archivage et suppression distante en IMAP ;
 - recherche globale et avancée, conversations et actions groupées ;
 - confirmation d'envoi fondée sur les destinataires acceptés par SMTP, signalement des refus et ouverture automatique de la copie locale `Envoyés` ;
-- contacts, groupes, import/export CSV ou vCard et fusion des doublons ;
-- brouillons automatiques, messages envoyés, signatures, modèles et rédaction HTML ;
+- contacts, groupes, import/export CSV ou vCard avec conservation des appartenances aux groupes et fusion des doublons ;
+- brouillons automatiques, messages envoyés, signatures, modèles et rédaction HTML avec fenêtre déplaçable, redimensionnable et ajout de pièces jointes par glisser-déposer ;
 - règles de tri, favoris, dossiers locaux et copie d'arborescences serveur ;
-- TODO locale enrichie des idées OVH partagées à traiter, apparence personnalisable, notifications et synchronisation périodique ;
+- TODO locale enrichie des idées OVH partagées à traiter, avec copie administrateur d’une idée vers la TODO locale et synchronisation de son état ;
+- barre de raccourcis de messagerie personnalisable, apparence personnalisable, notifications et synchronisation périodique ;
 - interface de boîte à idées anonyme : chaque poste retrouve localement ses propres propositions, tandis que la liste complète et son traitement exigent la connexion administrateur placée à la fin des paramètres ;
 - sauvegarde complète, validation et restauration avec copie de récupération ;
-- recherche et installation explicite des mises à jour publiées sur GitHub.
+- recherche des mises à jour publiées sur GitHub puis installation NSIS silencieuse et redémarrage automatique après téléchargement accepté.
 
 Le 9 novembre 2026, `npm.cmd run check` et `npm.cmd run smoke` ont réussi avec Node.js 22.18.0. Le smoke test s'est terminé avec un code 0 ; Chromium a seulement affiché des avertissements GPU lors de sa fermeture.
 
 ## Travail terminé ou intégré
 
-- La version déclarée est `1.0.4`.
-- `TODO.md` et `todos.json` contiennent 11 tâches terminées et aucune tâche ouverte.
+- La version déclarée est `1.0.5`.
+- `TODO.md` et `todos.json` contiennent 11 tâches terminées et 2 tâches ouvertes issues de la boîte à idées, implémentées dans le code de la version 1.0.5 et conservées ouvertes jusqu’à validation de la Release installée.
 - Les derniers commits intègrent notamment la publication 1.0.x, la TODO locale, la sécurité IMAP, la lecture HTML, les liens de courriels et les apparences personnalisables.
 - Le workflow de Release Windows est en place pour les tags `v*`.
 - L'installateur NSIS et la version portable x64 sont configurés dans `package.json`.
