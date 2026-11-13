@@ -63,6 +63,10 @@ dialog input { width: 100%; padding: 10px 11px; border: 1px solid #b8c5d2; borde
 .attachment-button:hover, .attachment-save-button:hover { position: relative; border-color: var(--accent-strong); background: var(--accent-soft); }
 .loading, .error { display: grid; min-height: 100%; place-items: center; color: #778395; text-align: center; }
 .error { color: #b42318; }
+.context-menu { position: fixed; z-index: 10000; display: grid; min-width: 210px; padding: 6px; border: 1px solid var(--skin-border); border-radius: 9px; background: var(--skin-surface); box-shadow: 0 12px 32px #10182833; }
+.context-menu button { width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; color: var(--skin-text); background: transparent; text-align: left; }
+.context-menu button:hover:not(:disabled) { color: var(--accent-ink); background: var(--accent-soft); }
+.context-menu-separator { height: 1px; margin: 5px 3px; background: var(--skin-border); }
 
 /* Le skin choisi dans la fenêtre principale suit aussi les mails détachés. */
 :root {

@@ -500,6 +500,11 @@ function createWindow() {
           const subject = document.querySelector('#compose-form input[name="subject"]');
           subject.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }));
           const contextLabels = [...document.querySelectorAll('.context-menu button')].map((button) => button.textContent);
+          editor.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 45, clientY: 45 }));
+          const editorContextLabels = [...document.querySelectorAll('.context-menu button')].map((button) => button.textContent);
+          const settingsButton = document.querySelector('#settings-button');
+          settingsButton.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 50, clientY: 50 }));
+          const buttonContextLabels = [...document.querySelectorAll('.context-menu button')].map((button) => button.textContent);
           const rootStyle = document.documentElement.style;
           const previousAccountId = selectedAccountId;
           selectedAccountId = '__favorites_smoke__';
@@ -511,6 +516,8 @@ function createWindow() {
             inputHtml,
             changeHtml,
             contextLabels,
+            editorContextLabels,
+            buttonContextLabels,
             interfaceColor: rootStyle.getPropertyValue('--accent-color').trim(),
             interfaceContrast: rootStyle.getPropertyValue('--accent-contrast').trim(),
             interfaceSoft: rootStyle.getPropertyValue('--accent-soft').trim(),
@@ -531,6 +538,9 @@ function createWindow() {
           !/color:\s*(?:#2080d0|rgb\(32,\s*128,\s*208\))/i.test(colorResult.changeHtml) ||
           !colorResult.contextLabels.includes('Copier') ||
           !colorResult.contextLabels.includes('Coller') ||
+          !colorResult.editorContextLabels.includes('Gras') ||
+          !colorResult.editorContextLabels.includes('Liste à puces') ||
+          !colorResult.buttonContextLabels.includes('Rechercher les mises à jour') ||
           colorResult.interfaceColor !== '#d04f85' ||
           colorResult.interfaceFontSize !== '12px' ||
           colorResult.interfaceSkin !== 'graphite' ||

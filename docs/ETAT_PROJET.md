@@ -21,6 +21,7 @@ Les éléments suivants sont présents dans l'implémentation et couverts totale
 - règles de tri, favoris, dossiers locaux et copie d'arborescences serveur ;
 - TODO locale enrichie des idées OVH partagées à traiter, avec copie administrateur d’une idée vers la TODO locale et synchronisation de son état ;
 - barre de raccourcis de messagerie personnalisable, apparence personnalisable, notifications et synchronisation périodique ;
+- menus au clic droit sur les commandes principales, messages, dossiers, contacts, brouillons, règles, tâches, idées et pièces jointes, y compris dans la fenêtre de lecture séparée ;
 - interface de boîte à idées anonyme : chaque poste retrouve localement ses propres propositions, tandis que la liste complète et son traitement exigent la connexion administrateur placée à la fin des paramètres ;
 - sauvegarde complète, validation et restauration avec copie de récupération ;
 - recherche des mises à jour publiées sur GitHub puis installation NSIS silencieuse et redémarrage automatique après téléchargement accepté.

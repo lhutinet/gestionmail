@@ -430,8 +430,48 @@ document.addEventListener('keydown', (event) => {
 window.addEventListener('blur', closeContextMenu);
 window.addEventListener('resize', closeContextMenu);
 document.addEventListener('scroll', closeContextMenu, true);
+
+function contextualItemsForButton(button) {
+  const label = String(button.title || button.getAttribute('aria-label') || button.textContent || 'Exécuter').trim();
+  const related = {
+    'new-message': [
+      { label: 'Ouvrir les brouillons', action: () => document.querySelector('#drafts-button').click() },
+      { label: 'Ouvrir les contacts', action: () => document.querySelector('#contacts-button').click() }
+    ],
+    'drafts-button': [{ label: 'Créer un nouveau message', disabled: !selectedAccountId, action: () => composeButton.click() }],
+    'contacts-button': [{ label: 'Créer un nouveau message', disabled: !selectedAccountId, action: () => composeButton.click() }],
+    'todo-button': [{ label: 'Ouvrir la boîte à idées', action: () => document.querySelector('#ideas-button').click() }],
+    'ideas-button': [{ label: 'Ouvrir la TODO', hidden: !canAdministerIdeas, action: () => document.querySelector('#todo-button').click() }],
+    'settings-button': [{
+      label: 'Rechercher les mises à jour',
+      action: async () => {
+        await openSettingsDialog();
+        document.querySelector('#check-updates').click();
+      }
+    }],
+    'sync-button': [{ label: 'Recherche avancée', action: () => document.querySelector('#advanced-search-button').click() }],
+    'advanced-search-button': [{ label: 'Actualiser le dossier', disabled: syncButton.disabled, action: () => syncButton.click() }],
+    'choose-attachments': [{ label: 'Enregistrer le brouillon', action: () => saveDraftButton.click() }],
+    'save-draft': [{ label: 'Ajouter des pièces jointes', action: () => document.querySelector('#choose-attachments').click() }],
+    'send-message': [{ label: 'Enregistrer sans envoyer', action: () => saveDraftButton.click() }],
+    'import-contacts': [{ label: 'Exporter contacts et groupes', action: () => document.querySelector('#export-contacts').click() }],
+    'export-contacts': [{ label: 'Importer contacts et groupes', action: () => document.querySelector('#import-contacts').click() }]
+  }[button.id] || [];
+  const items = [{ label, action: () => button.click() }];
+  if (related.some((item) => !item.hidden)) items.push({ separator: true }, ...related);
+  if (button.classList.contains('mail-toolbar-shortcut')) {
+    items.push({ separator: true }, { label: 'Personnaliser cette barre…', action: () => openSettingsDialog() });
+  }
+  return items;
+}
+
 document.addEventListener('contextmenu', (event) => {
   if (event.defaultPrevented) return;
+  const button = event.target.closest('button');
+  if (button && !button.disabled && !button.closest('.context-menu')) {
+    showContextMenu(event, contextualItemsForButton(button));
+    return;
+  }
   const editable = event.target.closest('input, textarea, [contenteditable="true"]');
   const selection = window.getSelection();
   if (!editable && selection?.isCollapsed !== false) return;
@@ -447,6 +487,16 @@ document.addEventListener('contextmenu', (event) => {
       { separator: true },
       { label: 'Tout sélectionner', action: () => window.gestionMail.editorCommand('selectAll') }
     );
+    if (editable === composeBodyEditor) {
+      items.push(
+        { separator: true },
+        { label: 'Gras', action: () => runComposeCommand('bold') },
+        { label: 'Italique', action: () => runComposeCommand('italic') },
+        { label: 'Souligné', action: () => runComposeCommand('underline') },
+        { label: 'Liste à puces', action: () => runComposeCommand('insertUnorderedList') },
+        { label: 'Effacer la mise en forme', action: () => runComposeCommand('removeFormat') }
+      );
+    }
   } else {
     items.push({ label: 'Copier', action: () => window.gestionMail.editorCommand('copy') });
   }
@@ -759,6 +809,23 @@ function renderTodos() {
       }
     });
     actions.append(remove);
+    row.addEventListener('contextmenu', (event) => showContextMenu(event, [
+      {
+        label: todo.done ? 'Rouvrir la tâche' : 'Marquer comme terminée',
+        disabled: checkbox.disabled,
+        action: () => {
+          checkbox.checked = !todo.done;
+          checkbox.dispatchEvent(new Event('change'));
+        }
+      },
+      {
+        label: 'Ajouter à la TODO locale',
+        hidden: !todo.remoteIdea || !canAdministerIdeas,
+        action: () => addIdeaToLocalTodo(todo)
+      },
+      { separator: true },
+      { label: todo.remoteIdea ? 'Supprimer l’idée OVH…' : 'Supprimer la tâche…', hidden: remove.hidden, danger: true, action: () => remove.click() }
+    ]));
     row.append(checkbox, content, actions);
     todoList.append(row);
   }
@@ -828,6 +895,28 @@ function renderIdeas() {
       });
       actions.append(addLocal);
       row.append(actions);
+      row.addEventListener('contextmenu', (event) => showContextMenu(event, [
+        { label: copied ? 'Déjà dans la TODO locale' : 'Ajouter à la TODO locale', disabled: Boolean(copied), action: () => addIdeaToLocalTodo(idea, ideaError) },
+        {
+          label: idea.status === 'completed' ? 'Rouvrir l’idée' : 'Marquer comme réalisée',
+          action: async () => {
+            const saved = await window.gestionMail.updateIdea(idea.id, idea.status === 'completed' ? 'published' : 'completed');
+            ideas = ideas.map((item) => item.id === saved.id ? saved : item);
+            updateTodoCount();
+            renderIdeas();
+            if (todoDialog.open) renderTodos();
+          }
+        },
+        { separator: true },
+        { label: 'Supprimer l’idée OVH…', danger: true, action: async () => {
+          if (!window.confirm(`Supprimer l’idée « ${idea.title} » ?`)) return;
+          await window.gestionMail.deleteIdea(idea.id);
+          ideas = ideas.filter((item) => item.id !== idea.id);
+          updateTodoCount();
+          renderIdeas();
+          if (todoDialog.open) renderTodos();
+        } }
+      ]));
     }
     ideaList.append(row);
   }
@@ -900,6 +989,15 @@ function renderDrafts() {
         draftError.textContent = readableError(error);
       }
     });
+    row.addEventListener('contextmenu', (event) => showContextMenu(event, [
+      { label: 'Ouvrir le brouillon', action: () => main.click() },
+      { label: 'Créer un nouveau message', disabled: !selectedAccountId, action: () => {
+        draftsDialog.close();
+        openComposer();
+      } },
+      { separator: true },
+      { label: 'Supprimer le brouillon', danger: true, action: () => remove.click() }
+    ]));
     row.append(main, remove);
     draftList.append(row);
   }
@@ -1021,6 +1119,16 @@ function renderRules() {
         ruleError.textContent = readableError(error);
       }
     });
+    row.addEventListener('contextmenu', (event) => showContextMenu(event, [
+      { label: 'Modifier la règle', action: () => selectRule(rule) },
+      { label: rule.enabled ? 'Désactiver la règle' : 'Activer la règle', action: async () => {
+        const saved = await window.gestionMail.saveMailRule({ ...rule, enabled: !rule.enabled });
+        mailRules = mailRules.map((item) => item.id === saved.id ? saved : item);
+        renderRules();
+      } },
+      { separator: true },
+      { label: 'Supprimer la règle', danger: true, action: () => remove.click() }
+    ]));
     row.append(main, kind, remove);
     ruleList.append(row);
   }
@@ -1142,6 +1250,12 @@ function renderComposeAttachments() {
       renderComposeAttachments();
       queueDraftSave();
     });
+    row.addEventListener('contextmenu', (event) => showContextMenu(event, [
+      { label: 'Ajouter d’autres fichiers…', action: () => document.querySelector('#choose-attachments').click() },
+      { label: 'Enregistrer le brouillon', action: () => saveDraftButton.click() },
+      { separator: true },
+      { label: `Retirer ${attachment.name}`, danger: true, action: () => remove.click() }
+    ]));
     row.append(label, remove);
     selectedAttachments.append(row);
   });
@@ -1216,6 +1330,19 @@ function createAddressLine(label, value, selectedAddresses, onSelectionChange) {
           chip.classList.add('selected');
         }
         onSelectionChange();
+      });
+      chip.addEventListener('contextmenu', (event) => {
+        const key = address.email.toLocaleLowerCase('en');
+        showContextMenu(event, [
+          { label: selectedAddresses.has(key) ? 'Désélectionner cette adresse' : 'Sélectionner cette adresse', action: () => chip.click() },
+          {
+            label: 'Ajouter aux contacts',
+            action: async () => {
+              await ensureAddressesInContacts([address]);
+              statusLine.textContent = `${address.email} a été ajouté aux contacts.`;
+            }
+          }
+        ]);
       });
       values.append(chip);
     }
@@ -2338,6 +2465,14 @@ folderList.addEventListener('contextmenu', (event) => {
   if (event.target !== folderList) return;
   showContextMenu(event, [
     { label: 'Créer un dossier sur le serveur…', disabled: !activeAccountUsesImap(), action: () => createServerFolder() }
+  ]);
+});
+localFolderList.addEventListener('contextmenu', (event) => {
+  if (event.target !== localFolderList) return;
+  showContextMenu(event, [
+    { label: 'Créer un dossier local…', disabled: !selectedAccountId, action: () => createLocalFolder() },
+    { label: 'Actualiser les dossiers Windows', disabled: !selectedAccountId, action: () => loadLocalFolders() },
+    { label: localSidebar.classList.contains('collapsed') ? 'Afficher le stockage local' : 'Réduire le stockage local', action: () => localSidebarToggle.click() }
   ]);
 });
 folderList.addEventListener('dragover', (event) => {
@@ -3598,6 +3733,10 @@ async function openMessage(messageId, row) {
             statusLine.textContent = `Échec : ${readableError(error)}`;
           }
         });
+        item.addEventListener('contextmenu', (event) => showContextMenu(event, [
+          { label: `Ouvrir ${attachment.filename}`, action: () => button.click() },
+          { label: 'Enregistrer dans Téléchargements', action: () => save.click() }
+        ]));
         item.append(button, save);
         attachments.append(item);
       }

@@ -5,6 +5,56 @@ const groupName = document.querySelector('#group-name');
 const groupSummary = document.querySelector('#group-summary');
 const groupError = document.querySelector('#group-error');
 let pendingGroupContactIds = [];
+let activeContextMenu = null;
+
+function closeContextMenu() {
+  activeContextMenu?.remove();
+  activeContextMenu = null;
+}
+
+function showContextMenu(event, items) {
+  event.preventDefault();
+  event.stopPropagation();
+  closeContextMenu();
+  const visibleItems = items.filter((item) => !item.hidden);
+  if (!visibleItems.length) return;
+  const menu = document.createElement('div');
+  menu.className = 'context-menu';
+  menu.setAttribute('role', 'menu');
+  for (const item of visibleItems) {
+    if (item.separator) {
+      const separator = document.createElement('div');
+      separator.className = 'context-menu-separator';
+      menu.append(separator);
+      continue;
+    }
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = item.label;
+    button.disabled = Boolean(item.disabled);
+    button.addEventListener('click', () => {
+      closeContextMenu();
+      item.action?.();
+    });
+    menu.append(button);
+  }
+  document.body.append(menu);
+  const margin = 8;
+  const bounds = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(margin, Math.min(event.clientX, window.innerWidth - bounds.width - margin))}px`;
+  menu.style.top = `${Math.max(margin, Math.min(event.clientY, window.innerHeight - bounds.height - margin))}px`;
+  activeContextMenu = menu;
+}
+
+document.addEventListener('pointerdown', (event) => {
+  if (!event.target.closest('.context-menu')) closeContextMenu();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeContextMenu();
+});
+window.addEventListener('blur', closeContextMenu);
+window.addEventListener('resize', closeContextMenu);
+document.addEventListener('scroll', closeContextMenu, true);
 
 function formatSize(size) {
   const bytes = Number(size) || 0;
@@ -55,6 +105,23 @@ function createAddressLine(labelText, value, selected, updateActions) {
         chip.classList.add('selected');
       }
       updateActions();
+    });
+    chip.addEventListener('contextmenu', (event) => {
+      const key = address.email.toLocaleLowerCase('en');
+      showContextMenu(event, [
+        { label: selected.has(key) ? 'Désélectionner cette adresse' : 'Sélectionner cette adresse', action: () => chip.click() },
+        {
+          label: 'Ajouter aux contacts',
+          action: async () => {
+            try {
+              await ensureContacts([address]);
+              window.alert(`${address.email} a été ajouté aux contacts.`);
+            } catch (error) {
+              window.alert(`Ajout impossible : ${readableError(error)}`);
+            }
+          }
+        }
+      ]);
     });
     values.append(chip);
   }
@@ -241,12 +308,32 @@ async function loadMessage() {
           window.alert(`Impossible d’enregistrer la pièce jointe : ${readableError(error)}`);
         }
       });
+      item.addEventListener('contextmenu', (event) => showContextMenu(event, [
+        { label: `Ouvrir ${attachment.filename}`, action: () => button.click() },
+        { label: 'Enregistrer dans Téléchargements', action: () => save.click() }
+      ]));
       item.append(button, save);
       attachments.append(item);
     }
     headers.after(attachments);
   }
 }
+
+document.addEventListener('contextmenu', (event) => {
+  if (event.defaultPrevented) return;
+  const button = event.target.closest('button');
+  if (button && !button.disabled && !button.closest('.context-menu')) {
+    showContextMenu(event, [{
+      label: String(button.title || button.getAttribute('aria-label') || button.textContent || 'Exécuter').trim(),
+      action: () => button.click()
+    }]);
+    return;
+  }
+  const selection = window.getSelection();
+  if (selection?.isCollapsed === false) {
+    showContextMenu(event, [{ label: 'Copier', action: () => window.gestionMail.editorCommand('copy') }]);
+  }
+});
 
 function applyInterfaceColor(value) {
   const color = /^#[0-9a-f]{6}$/i.test(String(value || '')) ? String(value).toLowerCase() : '#6ee7d2';
